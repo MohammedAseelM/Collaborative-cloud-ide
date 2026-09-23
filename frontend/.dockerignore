@@ -1,0 +1,24 @@
+# Dependencies
+node_modules
+npm-debug.log*
+
+# Environment files
+.env.local
+.env.*.local
+
+# Build output (rebuilt in Docker)
+dist
+
+# Git & IDE
+.git
+.github
+.vscode
+.claude
+
+# Test & lint
+coverage
+.oxlintrc.json
+
+# OS files
+.DS_Store
+Thumbs.db

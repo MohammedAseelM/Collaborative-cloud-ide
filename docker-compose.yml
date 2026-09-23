@@ -1,0 +1,74 @@
+
+
+services:
+  # Database Service
+  mongodb:
+    image: mongo:6.0-jammy
+    container_name: mcp_database
+    restart: always
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?MONGO_ROOT_USERNAME must be set}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}
+    volumes:
+      - db_data:/data/db
+    networks:
+      - ide_network
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --username \"$$MONGO_INITDB_ROOT_USERNAME\" --password \"$$MONGO_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin --eval \"db.adminCommand('ping').ok\" | grep 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # Backend Node.js Service
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mcp_backend
+    restart: always
+    environment:
+      - PORT=5000
+      - MONGO_URI=${MONGO_URI:?MONGO_URI must be set}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
+      - CLIENT_URL=${CLIENT_URL:?CLIENT_URL must be set}
+      - NODE_ENV=production
+      - PUBLIC_HOST=${PUBLIC_HOST:?PUBLIC_HOST must be set}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock # Mount host Docker socket for sandboxed runtime execution
+      - backend_temp:/app/temp                    # Directory for runtime execution scratch code mounts
+      - workspace_data:/workspace                 # Persistent workspace for project files
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - ide_network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:5000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # Frontend Nginx Static Service
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: mcp_frontend
+    restart: always
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - ide_network
+
+volumes:
+  db_data:
+  backend_temp:
+  workspace_data:
+
+networks:
+  ide_network:
+    driver: bridge

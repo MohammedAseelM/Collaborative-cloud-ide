@@ -1,0 +1,25 @@
+# render.yaml
+# Responsibility: Render Infrastructure-as-Code Blueprint specification.
+# Connect your GitHub repository to Render to automatically deploy the backend Web Service.
+
+services:
+  - type: web
+    name: collaborative-cloud-ide-backend
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: cd backend && npm install
+    startCommand: cd backend && node src/server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: MONGO_URI
+        sync: false # Set in Render Dashboard with MongoDB Atlas Connection String
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: CLIENT_URL
+        value: https://collaborative-cloud-ide.vercel.app

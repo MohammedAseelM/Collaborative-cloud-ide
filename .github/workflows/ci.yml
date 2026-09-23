@@ -1,0 +1,50 @@
+# .github/workflows/ci.yml
+# Responsibility: Automated CI/CD integration workflow. Runs linting checks,
+# builds static React bundles, and verifies compilation readiness.
+
+name: Continuous Integration & Build Verification
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  verify-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository Codebase
+      uses: actions/checkout@v3
+
+    - name: Set up Node.js Environment
+      uses: actions/setup-node@v3
+      with:
+        node-version: 18.x
+        cache: 'npm'
+        cache-dependency-path: |
+          backend/package-lock.json
+          frontend/package-lock.json
+
+    # --- Backend Lint & Checks ---
+    - name: Install Backend Dependencies
+      run: |
+        cd backend
+        npm ci
+
+    - name: Verify Backend JavaScript Syntax
+      run: |
+        cd backend
+        node --check src/server.js
+
+    # --- Frontend Build Verification ---
+    - name: Install Frontend Dependencies
+      run: |
+        cd frontend
+        npm ci
+
+    - name: Build Frontend static Bundle
+      run: |
+        cd frontend
+        npm run build

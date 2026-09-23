@@ -1,0 +1,43 @@
+/* src/index.css */
+/* Responsibility: Global stylesheet entry point. Imports Tailwind CSS
+   and defines any global base styles for the app. */
+
+@import "tailwindcss";
+
+body {
+  margin: 0;
+  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+  background-color: #020617;
+  color: #f8fafc;
+}
+
+.light body {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+.light [class~="bg-slate-950"] { background-color: #f8fafc !important; }
+.light [class~="bg-slate-950/20"] { background-color: rgb(248 250 252 / 0.8) !important; }
+.light [class~="bg-slate-950/60"],
+.light [class~="bg-slate-950/80"] { background-color: rgb(255 255 255 / 0.9) !important; }
+.light [class~="bg-slate-900"],
+.light [class~="bg-slate-900/20"],
+.light [class~="bg-slate-900/30"],
+.light [class~="bg-slate-900/40"],
+.light [class~="bg-slate-900/50"] { background-color: #ffffff !important; }
+.light [class~="bg-slate-800"] { background-color: #e2e8f0 !important; }
+
+.light [class~="border-slate-900"],
+.light [class~="border-slate-900/30"],
+.light [class~="border-slate-800"],
+.light [class~="border-slate-800/60"],
+.light [class~="border-slate-800/80"] { border-color: #cbd5e1 !important; }
+
+.light [class~="text-slate-100"] { color: #020617 !important; }
+.light [class~="text-slate-200"] { color: #0f172a !important; }
+.light [class~="text-slate-300"] { color: #1e293b !important; }
+.light [class~="text-slate-400"] { color: #334155 !important; }
+.light [class~="text-slate-500"] { color: #475569 !important; }
+
+.light [class~="hover:bg-slate-800"]:hover,
+.light [class~="hover:bg-slate-900"]:hover { background-color: #e2e8f0 !important; }

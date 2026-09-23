@@ -1,0 +1,17 @@
+{
+  "ignore": [
+    "temp/*",
+    "temp/**/*",
+    "logs/*",
+    "logs/**/*",
+    "tests/*",
+    "tests/**/*",
+    "data/*",
+    "data/**/*",
+    "node_modules/*"
+  ],
+  "watch": [
+    "src"
+  ],
+  "ext": "js,mjs,cjs,json"
+}
