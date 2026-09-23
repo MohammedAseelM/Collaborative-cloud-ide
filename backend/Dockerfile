@@ -1,17 +1,19 @@
+FROM node:22-alpine
 
-FROM node:18-alpine
-
-RUN apk add --no-cache docker-cli
+RUN apk add --no-cache \
+    docker-cli \
+    python3 \
+    make \
+    g++
 
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --only=production
+
+RUN npm ci --omit=dev
 
 COPY . .
 
 EXPOSE 5000
 
-ENV NODE_ENV=production
-
-CMD ["node", "src/server.js"]
+CMD ["npm", "start"]
