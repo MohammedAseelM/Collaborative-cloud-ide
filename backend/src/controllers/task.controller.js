@@ -4,6 +4,7 @@
 import Task from "../models/task.model.js";
 import User from "../models/user.model.js";
 import Activity from "../models/activity.model.js";
+import Notification from "../models/notification.model.js";
 import { findMemberProjectOrThrow, verifyProjectPermission } from "./project.controller.js";
 
 /**
@@ -100,9 +101,45 @@ export const createProjectTask = async (req, res, next) => {
       },
     });
 
+    // Create Notification in DB for the assignee
+    const notifMessage = `${req.user.name} assigned you a task: "${title.trim()}" in project "${project.name}".`;
+    const notification = await Notification.create({
+      recipient: assignedTo,
+      type: "TASK",
+      title: "New Task Assigned",
+      message: notifMessage,
+      relatedProject: projectId,
+    });
+
     const io = req.app.get("io");
     if (io) {
+      // Broadcast to project workspace for live member modal updates
       io.to(`project:${projectId}`).emit("task-created", populatedTask);
+
+      // Notify the specific assigned user across personal channel
+      const targetUserRoom = `user:${assignedTo.toString()}`;
+      io.to(targetUserRoom).emit("notification-received", notification);
+      io.to(targetUserRoom).emit("task-assigned", {
+        task: populatedTask,
+        projectId,
+        projectName: project.name,
+        assignedByName: req.user.name,
+        title: title.trim(),
+        description: (description || "").trim(),
+        priority: task.priority,
+        dueDate: task.dueDate,
+      });
+      io.to(targetUserRoom).emit("task-popup", {
+        taskId: task._id,
+        projectId,
+        projectName: project.name,
+        assignedByName: req.user.name,
+        title: title.trim(),
+        description: (description || "").trim(),
+        priority: task.priority,
+        dueDate: task.dueDate,
+        message: notifMessage,
+      });
     }
 
     res.status(201).json({
@@ -160,6 +197,9 @@ export const updateTaskStatus = async (req, res, next) => {
     const io = req.app.get("io");
     if (io) {
       io.to(`project:${projectId}`).emit("task-updated", populatedTask);
+      if (task.assignedTo) {
+        io.to(`user:${task.assignedTo.toString()}`).emit("task-updated", populatedTask);
+      }
     }
 
     res.status(200).json({
@@ -194,6 +234,9 @@ export const deleteTask = async (req, res, next) => {
     const io = req.app.get("io");
     if (io) {
       io.to(`project:${projectId}`).emit("task-deleted", { taskId });
+      if (task.assignedTo) {
+        io.to(`user:${task.assignedTo.toString()}`).emit("task-deleted", { taskId });
+      }
     }
 
     res.status(200).json({

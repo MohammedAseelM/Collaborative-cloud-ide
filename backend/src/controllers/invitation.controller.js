@@ -83,7 +83,7 @@ export const createInvitation = async (req, res, next) => {
       invitedBy: req.user._id,
     });
 
-    // If invitee is registered, send them an in-app notification
+    // If invitee is registered, send them an in-app notification & instant real-time popup
     if (invitee) {
       const notification = await Notification.create({
         recipient: invitee._id,
@@ -95,7 +95,41 @@ export const createInvitation = async (req, res, next) => {
 
       const io = req.app.get("io");
       if (io) {
+        const invitePayload = {
+          _id: invitation._id,
+          project: {
+            _id: project._id,
+            name: project.name,
+            description: project.description,
+            language: project.language,
+            owner: project.owner,
+          },
+          role: invitation.role,
+          invitedBy: {
+            _id: req.user._id,
+            name: req.user.name,
+            email: req.user.email,
+          },
+          expiresAt: invitation.expiresAt,
+          createdAt: invitation.createdAt,
+        };
+
         io.to(`user:${invitee._id.toString()}`).emit("notification-received", notification);
+        io.to(`user:${invitee._id.toString()}`).emit("invitation-created", {
+          invitation: invitePayload,
+          projectName: project.name,
+          inviterName: req.user.name,
+          role: assignedRole,
+        });
+        io.to(`user:${invitee._id.toString()}`).emit("invitation-popup", {
+          invitationId: invitation._id,
+          projectId: project._id,
+          projectName: project.name,
+          inviterName: req.user.name,
+          role: assignedRole,
+          expiresAt: invitation.expiresAt,
+          message: `${req.user.name} sent you an invitation to collaborate on "${project.name}" as an ${assignedRole}.`,
+        });
       }
     }
 

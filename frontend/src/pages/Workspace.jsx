@@ -1839,6 +1839,7 @@ const Workspace = () => {
         userRole={userRole}
         currentUserId={currentUser?.id}
         onlineUsers={onlineUsers}
+        socket={socket}
         onBeforeSaveVersion={handleManualSave}
         onRestoreVersion={handleRestoreVersion}
         onOpenDiff={(ver) => setDiffVersion(ver)}

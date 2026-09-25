@@ -51,6 +51,7 @@ const NotificationDropdown = () => {
     ACTIVITY: <Activity size={14} className="text-emerald-400" />,
     SYSTEM: <Info size={14} className="text-amber-400" />,
     CHAT: <MessageSquare size={14} className="text-cyan-400" />,
+    TASK: <CheckSquare size={14} className="text-emerald-400" />,
   };
 
   return (

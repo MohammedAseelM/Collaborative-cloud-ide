@@ -3,6 +3,7 @@ import { AuthProvider } from "./context/AuthContext";
 import { ToastProvider } from "./context/ToastContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import { NotificationProvider } from "./context/NotificationContext";
+import RealtimeAlertModal from "./components/RealtimeAlertModal";
 import AppRoutes from "./routes/AppRoutes";
 
 function App() {
@@ -12,6 +13,7 @@ function App() {
         <AuthProvider>
           <ToastProvider>
             <NotificationProvider>
+              <RealtimeAlertModal />
               <AppRoutes />
             </NotificationProvider>
           </ToastProvider>

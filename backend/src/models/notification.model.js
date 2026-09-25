@@ -13,7 +13,7 @@ const notificationSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ["INVITE", "ACTIVITY", "SYSTEM", "CHAT"],
+      enum: ["INVITE", "ACTIVITY", "SYSTEM", "CHAT", "TASK"],
       required: [true, "Notification type is required"],
     },
     title: {

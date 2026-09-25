@@ -41,6 +41,7 @@ test("Two-Client Real-Time Collaboration Full Flow", async (t) => {
       cors: { origin: "*", credentials: true },
     });
     registerSocketHandlers(ioServer);
+    app.set("io", ioServer);
 
     await new Promise((resolve) => server.listen(0, resolve));
     const port = server.address().port;
@@ -278,5 +279,80 @@ test("Two-Client Real-Time Collaboration Full Flow", async (t) => {
 
     const sync2 = await codeChangePromise2;
     assert.equal(sync2.text, "<!-- recovered -->");
+  });
+
+  await t.test("Step 10: Real-time Invitation Flow (User A invites User C -> User C receives instant invitation-created and invitation-popup)", async () => {
+    const userC = await User.create({ name: "User C", email: "userC@test.com", password: "Password123!" });
+    const tokenC = generateToken(userC._id, userC.email);
+
+    const clientC = ioClient(socketServerUrl, {
+      extraHeaders: { cookie: `token=${tokenC}` },
+      transports: ["websocket"],
+    });
+
+    await new Promise((resolve) => clientC.on("connect", resolve));
+
+    const inviteCreatedPromise = new Promise((resolve) => clientC.once("invitation-created", resolve));
+    const invitePopupPromise = new Promise((resolve) => clientC.once("invitation-popup", resolve));
+    const notifReceivedPromise = new Promise((resolve) => clientC.once("notification-received", resolve));
+
+    // User A invites User C to the project via HTTP API
+    const res = await fetch(`${socketServerUrl}/api/projects/${project._id}/invitations`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: `token=${tokenA}`,
+      },
+      body: JSON.stringify({ email: "userC@test.com", role: "Editor" }),
+    });
+
+    assert.equal(res.status, 201, "Invitation API created successfully");
+
+    const [inviteCreated, invitePopup, notifReceived] = await Promise.all([
+      inviteCreatedPromise,
+      invitePopupPromise,
+      notifReceivedPromise,
+    ]);
+
+    assert.equal(inviteCreated.projectName, "Realtime Collab Project");
+    assert.equal(inviteCreated.role, "Editor");
+    assert.equal(invitePopup.role, "Editor");
+    assert.equal(notifReceived.type, "INVITE");
+
+    clientC.disconnect();
+  });
+
+  await t.test("Step 11: Real-time Task Assignment Flow (Owner A assigns task to Member B -> Member B receives instant task-assigned, task-popup, and notification)", async () => {
+    const taskAssignedPromise = new Promise((resolve) => clientB.once("task-assigned", resolve));
+    const taskPopupPromise = new Promise((resolve) => clientB.once("task-popup", resolve));
+    const notifReceivedPromise = new Promise((resolve) => clientB.once("notification-received", resolve));
+
+    // User A assigns task to User B via HTTP API
+    const res = await fetch(`${socketServerUrl}/api/projects/${project._id}/tasks`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: `token=${tokenA}`,
+      },
+      body: JSON.stringify({
+        title: "Implement Auth Flow",
+        description: "Set up JWT cookies and refresh logic",
+        assignedTo: userB._id.toString(),
+        priority: "high",
+      }),
+    });
+
+    assert.equal(res.status, 201, "Task API created successfully");
+
+    const [taskAssigned, taskPopup, notifReceived] = await Promise.all([
+      taskAssignedPromise,
+      taskPopupPromise,
+      notifReceivedPromise,
+    ]);
+
+    assert.equal(taskAssigned.title, "Implement Auth Flow");
+    assert.equal(taskAssigned.priority, "high");
+    assert.equal(taskPopup.title, "Implement Auth Flow");
+    assert.equal(notifReceived.type, "TASK");
   });
 });

@@ -123,6 +123,7 @@ export default function MemberModal({
   userRole,
   currentUserId,
   onlineUsers = [],
+  socket,
   onBeforeSaveVersion,
   onRestoreVersion,
   onOpenDiff,
@@ -239,6 +240,33 @@ export default function MemberModal({
     loadActivities();
     loadTasks();
   }, [isOpen, loadActivities, loadTeam, loadVersions, loadTasks]);
+
+  // Real-time task synchronization over socket
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleTaskCreated = (newTask) => {
+      setTasks((prev) => [newTask, ...prev.filter((t) => t._id !== newTask._id)]);
+    };
+
+    const handleTaskUpdated = (updatedTask) => {
+      setTasks((prev) => prev.map((t) => (t._id === updatedTask._id ? updatedTask : t)));
+    };
+
+    const handleTaskDeleted = ({ taskId }) => {
+      setTasks((prev) => prev.filter((t) => t._id !== taskId));
+    };
+
+    socket.on("task-created", handleTaskCreated);
+    socket.on("task-updated", handleTaskUpdated);
+    socket.on("task-deleted", handleTaskDeleted);
+
+    return () => {
+      socket.off("task-created", handleTaskCreated);
+      socket.off("task-updated", handleTaskUpdated);
+      socket.off("task-deleted", handleTaskDeleted);
+    };
+  }, [socket]);
 
   // Validate Email Address
   const validateEmail = (email) => {

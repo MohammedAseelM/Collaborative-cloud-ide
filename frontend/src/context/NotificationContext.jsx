@@ -1,6 +1,6 @@
 // src/context/NotificationContext.jsx
-// Responsibility: Global centralized real-time notification, invitation, and unread badge state management.
-// Automatically connects the user's private notification channel and updates badges across the entire app.
+// Responsibility: Global centralized real-time notification, invitation, task alerts, and unread badge state management.
+// Automatically connects the user's private notification channel and updates badges/popups across the entire app.
 
 import { createContext, useContext, useEffect, useState, useCallback, useMemo } from "react";
 import { io } from "socket.io-client";
@@ -25,6 +25,11 @@ export const NotificationProvider = ({ children }) => {
   const [invitations, setInvitations] = useState([]);
   const [activeChatProjectId, setActiveChatProjectId] = useState(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [activePopup, setActivePopup] = useState(null); // { type: "INVITE" | "TASK", data: {} }
+
+  const closePopup = useCallback(() => {
+    setActivePopup(null);
+  }, []);
 
   // Load initial notifications & invitations
   const refreshNotifications = useCallback(async () => {
@@ -57,6 +62,7 @@ export const NotificationProvider = ({ children }) => {
       setNotifications([]);
       setUnreadCount(0);
       setInvitations([]);
+      setActivePopup(null);
     }
   }, [isAuthenticated, refreshNotifications, refreshInvitations]);
 
@@ -95,16 +101,47 @@ export const NotificationProvider = ({ children }) => {
       addToast(notif.title ? `${notif.title}: ${notif.message}` : "New notification received", "info");
     });
 
-    // 2. Real-Time Invitation Created
+    // 2. Real-Time Invitation Created (Instant state update & popup)
     s.on("invitation-created", (inviteData) => {
       const inviteObj = inviteData.invitation || inviteData;
       setInvitations((prev) => [inviteObj, ...prev.filter((i) => i._id !== inviteObj._id && i._id !== inviteData.invitationId)]);
       setUnreadCount((c) => c + 1);
       refreshInvitations();
+      setActivePopup({
+        type: "INVITE",
+        data: inviteData,
+      });
       addToast(`You were invited to project "${inviteData.projectName || "Workspace"}"!`, "info");
     });
 
-    // 3. Chat Notification from other projects or when chat is closed
+    // 2.5 Real-Time Invitation Popup
+    s.on("invitation-popup", (popupData) => {
+      setActivePopup({
+        type: "INVITE",
+        data: popupData,
+      });
+      refreshInvitations();
+    });
+
+    // 3. Real-Time Task Assigned (Instant state update & popup)
+    s.on("task-assigned", (taskData) => {
+      setActivePopup({
+        type: "TASK",
+        data: taskData,
+      });
+      addToast(`Task assigned: "${taskData.title}" in ${taskData.projectName}`, "info");
+      refreshNotifications();
+    });
+
+    // 3.5 Real-Time Task Popup
+    s.on("task-popup", (popupData) => {
+      setActivePopup({
+        type: "TASK",
+        data: popupData,
+      });
+    });
+
+    // 4. Chat Notification from other projects or when chat is closed
     s.on("chat-message-notification", ({ projectId, projectName, message }) => {
       // If user is currently in this project and actively looking at the chat, do not duplicate notification
       if (activeChatProjectId === projectId && isChatOpen) {
@@ -131,7 +168,7 @@ export const NotificationProvider = ({ children }) => {
     return () => {
       s.disconnect();
     };
-  }, [isAuthenticated, user?._id || user?.id, addToast, activeChatProjectId, isChatOpen, refreshInvitations]);
+  }, [isAuthenticated, user?._id || user?.id, addToast, activeChatProjectId, isChatOpen, refreshInvitations, refreshNotifications]);
 
   const markRead = async (id) => {
     try {
@@ -169,6 +206,8 @@ export const NotificationProvider = ({ children }) => {
     unreadCount,
     displayBadgeCount,
     invitations,
+    activePopup,
+    closePopup,
     refreshNotifications,
     refreshInvitations,
     markRead,
