@@ -57,6 +57,7 @@ const releaseCursorColor = (socket) => {
 
 // In-memory cache to accumulate keystrokes per file node
 const fileCodeCache = {}; // { [fileId]: { code: String, lastEditedBy: ObjectId, saveTimeout: Timeout } }
+const fileActiveCursors = new Map(); // { [fileId]: Map<socketId, cursorPayload> }
 
 const parseCookies = (cookieHeader) => {
   if (!cookieHeader) return {};
@@ -215,14 +216,27 @@ export const registerSocketHandlers = (io) => {
     });
 
     // 2. Switch/Join File Edit Room
-    socket.on("join-file", async ({ fileId }) => {
+    socket.on("join-file", async ({ fileId, projectId: incomingProjectId }) => {
       try {
+        const targetFileId = fileId ? fileId.toString() : null;
+        if (!targetFileId) return;
+
+        const file = await FileNode.findById(targetFileId);
+        if (!file || file.isFolder) {
+          socket.emit("error", { message: "File not found" });
+          return;
+        }
+
+        if (!socket.projectId) {
+          socket.projectId = incomingProjectId || file.project.toString();
+          socket.join(`project:${socket.projectId}`);
+        }
+
         const projectId = socket.projectId;
-        if (!projectId) return;
 
         // Leave previous file room if any
-        if (socket.activeFileId && socket.activeFileId !== fileId) {
-          const oldFileId = socket.activeFileId;
+        if (socket.activeFileId && socket.activeFileId.toString() !== targetFileId) {
+          const oldFileId = socket.activeFileId.toString();
           socket.to(`file:${oldFileId}`).emit("cursor-remove", {
             fileId: oldFileId,
             userId: socket.user._id,
@@ -239,18 +253,12 @@ export const registerSocketHandlers = (io) => {
           socket.leave(`file:${oldFileId}`);
         }
 
-        const file = await FileNode.findOne({ _id: fileId, project: projectId });
-        if (!file || file.isFolder) {
-          socket.emit("error", { message: "File not found" });
-          return;
-        }
-
-        socket.activeFileId = fileId;
-        socket.join(`file:${fileId}`);
+        socket.activeFileId = targetFileId;
+        socket.join(`file:${targetFileId}`);
 
         // Initialize file code cache if not present
-        if (!fileCodeCache[fileId]) {
-          fileCodeCache[fileId] = {
+        if (!fileCodeCache[targetFileId]) {
+          fileCodeCache[targetFileId] = {
             code: file.content || "",
             lastEditedBy: socket.user._id,
             saveTimeout: null,
@@ -258,7 +266,18 @@ export const registerSocketHandlers = (io) => {
         }
 
         // Send current file content back to client
-        socket.emit("file-sync", { fileId, code: fileCodeCache[fileId].code });
+        socket.emit("file-sync", { fileId: targetFileId, code: fileCodeCache[targetFileId].code });
+
+        // Send any existing collaborators' active cursors in this file to the joining user
+        const existingCursors = fileActiveCursors.get(targetFileId);
+        if (existingCursors) {
+          for (const [sId, cData] of existingCursors.entries()) {
+            if (sId !== socket.id) {
+              socket.emit("cursor-move", cData);
+              socket.emit("cursor-update", cData);
+            }
+          }
+        }
 
         // Broadcast presence update (showing which file user is looking at)
         await broadcastProjectPresence(io, projectId);
@@ -271,8 +290,11 @@ export const registerSocketHandlers = (io) => {
 
     // 2.5 Leave File Edit Room
     socket.on("leave-file", ({ fileId }) => {
-      const targetFileId = fileId || socket.activeFileId;
+      const rawTarget = fileId || socket.activeFileId;
+      const targetFileId = rawTarget ? rawTarget.toString() : null;
       if (!targetFileId) return;
+
+      fileActiveCursors.get(targetFileId)?.delete(socket.id);
 
       socket.to(`file:${targetFileId}`).emit("cursor-remove", {
         fileId: targetFileId,
@@ -288,7 +310,7 @@ export const registerSocketHandlers = (io) => {
         username: socket.user.name,
       });
       socket.leave(`file:${targetFileId}`);
-      if (socket.activeFileId === targetFileId) {
+      if (socket.activeFileId && socket.activeFileId.toString() === targetFileId) {
         socket.activeFileId = null;
       }
       if (socket.projectId) {
@@ -297,12 +319,20 @@ export const registerSocketHandlers = (io) => {
     });
 
     // 3. Sync Real-Time Keystroke edits in File room
-    socket.on("code-change", ({ fileId, rangeOffset, rangeLength, text }) => {
+    socket.on("code-change", async ({ fileId, rangeOffset, rangeLength, text }) => {
       if (!["Owner", "Admin", "Editor"].includes(socket.projectRole)) {
         socket.emit("error", { message: "Your role has read-only access to this project" });
         return;
       }
-      if (!fileId || socket.activeFileId !== fileId || !fileCodeCache[fileId]) return;
+      const rawTarget = fileId || socket.activeFileId;
+      const targetFileId = rawTarget ? rawTarget.toString() : null;
+      if (!targetFileId) return;
+
+      if (!socket.activeFileId || socket.activeFileId.toString() !== targetFileId) {
+        socket.activeFileId = targetFileId;
+        socket.join(`file:${targetFileId}`);
+      }
+
       try {
         assertProjectEditable(socket.projectId, socket.user);
       } catch (error) {
@@ -310,23 +340,41 @@ export const registerSocketHandlers = (io) => {
         return;
       }
 
-      const cache = fileCodeCache[fileId];
+      if (!fileCodeCache[targetFileId]) {
+        try {
+          const file = await FileNode.findOne({ _id: targetFileId, project: socket.projectId });
+          if (file) {
+            fileCodeCache[targetFileId] = {
+              code: file.content || "",
+              lastEditedBy: socket.user._id,
+              saveTimeout: null,
+            };
+          }
+        } catch (e) {
+          logger.error(`Error populating cache for code-change: ${e.message}`);
+        }
+      }
 
-      const originalCode = cache.code;
+      const cache = fileCodeCache[targetFileId];
+      if (!cache) return;
+
+      const originalCode = cache.code || "";
+      const validOffset = Math.max(0, Math.min(rangeOffset, originalCode.length));
+      const validLength = Math.max(0, Math.min(rangeLength, originalCode.length - validOffset));
       const updatedCode =
-        originalCode.substring(0, rangeOffset) +
+        originalCode.substring(0, validOffset) +
         text +
-        originalCode.substring(rangeOffset + rangeLength);
+        originalCode.substring(validOffset + validLength);
 
       cache.code = updatedCode;
       cache.lastEditedBy = socket.user._id;
 
       // Broadcast the delta changes to other users looking at this file
-      socket.to(`file:${fileId}`).emit("code-change", {
-        fileId,
+      socket.to(`file:${targetFileId}`).emit("code-change", {
+        fileId: targetFileId,
         userId: socket.user._id,
-        rangeOffset,
-        rangeLength,
+        rangeOffset: validOffset,
+        rangeLength: validLength,
         text,
       });
 
@@ -341,7 +389,7 @@ export const registerSocketHandlers = (io) => {
         clearTimeout(cache.saveTimeout);
       }
       cache.saveTimeout = setTimeout(() => {
-        saveCachedFileToDB(fileId);
+        saveCachedFileToDB(targetFileId);
       }, 2000);
     });
 
@@ -357,8 +405,14 @@ export const registerSocketHandlers = (io) => {
         selectionEnd,
       } = payload;
 
-      const activeFile = fileId || socket.activeFileId;
-      if (!activeFile || socket.activeFileId !== activeFile) return;
+      const rawTarget = fileId || socket.activeFileId;
+      const targetFileId = rawTarget ? rawTarget.toString() : null;
+      if (!targetFileId) return;
+
+      if (!socket.activeFileId || socket.activeFileId.toString() !== targetFileId) {
+        socket.activeFileId = targetFileId;
+        socket.join(`file:${targetFileId}`);
+      }
 
       const cLine = cursorLine ?? cursorPosition?.lineNumber;
       const cCol = cursorColumn ?? cursorPosition?.column;
@@ -375,7 +429,7 @@ export const registerSocketHandlers = (io) => {
 
       const normalizedPayload = {
         projectId: socket.projectId,
-        fileId: activeFile,
+        fileId: targetFileId,
         userId: socket.user._id.toString(),
         username: socket.user.name,
         avatar: socket.user.avatar || null,
@@ -391,21 +445,35 @@ export const registerSocketHandlers = (io) => {
           endLineNumber: selEnd.lineNumber,
           endColumn: selEnd.column,
         } : null),
-        userColor: socket.userColor,
-        color: socket.userColor,
+        userColor: socket.userColor || CURSOR_COLORS[0],
+        color: socket.userColor || CURSOR_COLORS[0],
         timestamp: Date.now(),
       };
 
+      // Store in active cursor map
+      let fileMap = fileActiveCursors.get(targetFileId);
+      if (!fileMap) {
+        fileMap = new Map();
+        fileActiveCursors.set(targetFileId, fileMap);
+      }
+      fileMap.set(socket.id, normalizedPayload);
+
       // Broadcast both cursor-move and cursor-update
-      socket.to(`file:${activeFile}`).emit("cursor-move", normalizedPayload);
-      socket.to(`file:${activeFile}`).emit("cursor-update", normalizedPayload);
+      socket.to(`file:${targetFileId}`).emit("cursor-move", normalizedPayload);
+      socket.to(`file:${targetFileId}`).emit("cursor-update", normalizedPayload);
     });
 
     // 4.5 Selection Change Tracking in File room
     socket.on("selection-change", (payload = {}) => {
       const { fileId, selectionStart, selectionEnd, selection } = payload;
-      const activeFile = fileId || socket.activeFileId;
-      if (!activeFile || socket.activeFileId !== activeFile) return;
+      const rawTarget = fileId || socket.activeFileId;
+      const targetFileId = rawTarget ? rawTarget.toString() : null;
+      if (!targetFileId) return;
+
+      if (!socket.activeFileId || socket.activeFileId.toString() !== targetFileId) {
+        socket.activeFileId = targetFileId;
+        socket.join(`file:${targetFileId}`);
+      }
 
       const selStart = selectionStart || (selection ? {
         lineNumber: selection.startLineNumber,
@@ -419,7 +487,7 @@ export const registerSocketHandlers = (io) => {
 
       const normalizedPayload = {
         projectId: socket.projectId,
-        fileId: activeFile,
+        fileId: targetFileId,
         userId: socket.user._id.toString(),
         username: socket.user.name,
         avatar: socket.user.avatar || null,
@@ -431,44 +499,59 @@ export const registerSocketHandlers = (io) => {
           endLineNumber: selEnd.lineNumber,
           endColumn: selEnd.column,
         } : null),
-        userColor: socket.userColor,
-        color: socket.userColor,
+        userColor: socket.userColor || CURSOR_COLORS[0],
+        color: socket.userColor || CURSOR_COLORS[0],
         timestamp: Date.now(),
       };
 
-      socket.to(`file:${activeFile}`).emit("selection-change", normalizedPayload);
+      // Store updated selection in active cursor map
+      const fileMap = fileActiveCursors.get(targetFileId);
+      if (fileMap && fileMap.has(socket.id)) {
+        const existing = fileMap.get(socket.id);
+        fileMap.set(socket.id, { ...existing, ...normalizedPayload });
+      }
+
+      socket.to(`file:${targetFileId}`).emit("selection-change", normalizedPayload);
     });
 
     // 4.6 Mouse Pointer Movement Tracking in File room
     socket.on("mouse-move", (payload = {}) => {
       const { fileId, mouseX, mouseY } = payload;
-      const activeFile = fileId || socket.activeFileId;
-      if (!activeFile || socket.activeFileId !== activeFile) return;
+      const rawTarget = fileId || socket.activeFileId;
+      const targetFileId = rawTarget ? rawTarget.toString() : null;
+      if (!targetFileId) return;
+
+      if (!socket.activeFileId || socket.activeFileId.toString() !== targetFileId) {
+        socket.activeFileId = targetFileId;
+        socket.join(`file:${targetFileId}`);
+      }
 
       const normalizedPayload = {
         projectId: socket.projectId,
-        fileId: activeFile,
+        fileId: targetFileId,
         userId: socket.user._id.toString(),
         username: socket.user.name,
         avatar: socket.user.avatar || null,
         mouseX,
         mouseY,
-        userColor: socket.userColor,
-        color: socket.userColor,
+        userColor: socket.userColor || CURSOR_COLORS[0],
+        color: socket.userColor || CURSOR_COLORS[0],
         timestamp: Date.now(),
       };
 
-      socket.to(`file:${activeFile}`).emit("mouse-move", normalizedPayload);
-      socket.to(`file:${activeFile}`).emit("mouse-update", normalizedPayload);
+      socket.to(`file:${targetFileId}`).emit("mouse-move", normalizedPayload);
+      socket.to(`file:${targetFileId}`).emit("mouse-update", normalizedPayload);
     });
 
     // 5. Typing indicators in File room
     socket.on("typing-status", ({ fileId, isTyping }) => {
-      if (!fileId || socket.activeFileId !== fileId) return;
+      const rawTarget = fileId || socket.activeFileId;
+      const targetFileId = rawTarget ? rawTarget.toString() : null;
+      if (!targetFileId) return;
 
       socket.isTyping = isTyping;
-      socket.to(`file:${fileId}`).emit("typing-update", {
-        fileId,
+      socket.to(`file:${targetFileId}`).emit("typing-update", {
+        fileId: targetFileId,
         userId: socket.user._id,
         username: socket.user.name,
         isTyping,
@@ -481,7 +564,9 @@ export const registerSocketHandlers = (io) => {
         socket.emit("error", { message: "Your role has read-only access to this project" });
         return;
       }
-      if (!fileId || !fileCodeCache[fileId]) return;
+      const rawTarget = fileId || socket.activeFileId;
+      const targetFileId = rawTarget ? rawTarget.toString() : null;
+      if (!targetFileId || !fileCodeCache[targetFileId]) return;
       try {
         assertProjectEditable(socket.projectId, socket.user);
       } catch (error) {
@@ -489,15 +574,15 @@ export const registerSocketHandlers = (io) => {
         return;
       }
 
-      const cache = fileCodeCache[fileId];
+      const cache = fileCodeCache[targetFileId];
       cache.code = code;
       cache.lastEditedBy = socket.user._id;
 
       // Broadcast new code content to everyone in the file room
-      socket.to(`file:${fileId}`).emit("file-sync", { fileId, code });
+      socket.to(`file:${targetFileId}`).emit("file-sync", { fileId: targetFileId, code });
 
       // Save to MongoDB immediately
-      saveCachedFileToDB(fileId);
+      saveCachedFileToDB(targetFileId);
     });
 
     // 6.5 Project Chat Messages Handler
@@ -518,6 +603,20 @@ export const registerSocketHandlers = (io) => {
 
         // Broadcast message to everyone in the project workspace
         io.to(`project:${projectId}`).emit("message-received", populated);
+
+        // Notify other project members via their personal channels
+        const project = await Project.findById(projectId).select("name members");
+        if (project && project.members) {
+          for (const memberId of project.members) {
+            if (memberId.toString() !== socket.user._id.toString()) {
+              io.to(`user:${memberId.toString()}`).emit("chat-message-notification", {
+                projectId,
+                projectName: project.name,
+                message: populated,
+              });
+            }
+          }
+        }
 
       } catch (err) {
         logger.error(`Error processing socket chat message: ${err.message}`);
@@ -800,6 +899,7 @@ export const registerSocketHandlers = (io) => {
 
       socket.leave(`project:${projectId}`);
       if (fileId) {
+        fileActiveCursors.get(fileId)?.delete(socket.id);
         socket.to(`file:${fileId}`).emit("cursor-remove", {
           fileId,
           userId: socket.user._id,

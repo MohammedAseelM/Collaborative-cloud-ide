@@ -1,7 +1,3 @@
-// src/pages/Dashboard.jsx
-// Responsibility: Composes the navigation, sidebar, recent project grids,
-// paginated list navigation, search, loading skeletons, and toast alerts.
-
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, FolderCode, FolderUp, Sparkles } from "lucide-react";

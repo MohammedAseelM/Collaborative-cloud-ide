@@ -1,9 +1,3 @@
-// src/services/api.js
-// Responsibility: Single, pre-configured Axios instance used by every
-// service module in the app. Centralizing this here means the base
-// URL, headers, and (later) auth token attachment only need to be
-// configured in one place.
-
 import axios from "axios";
 
 const api = axios.create({

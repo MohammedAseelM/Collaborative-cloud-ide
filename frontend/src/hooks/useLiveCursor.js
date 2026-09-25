@@ -15,7 +15,28 @@ export const useLiveCursor = ({
   const [remoteCursors, setRemoteCursors] = useState({});
   const decorationsMapRef = useRef({}); // { [userId]: decorationIds[] }
   const animationFrameRef = useRef(null);
-  const pendingCursorEmitRef = useRef(null);
+  const pendingCursorEmitRef = useRef(false);
+
+  const activeFileIdRef = useRef(activeFileId);
+  const socketRef = useRef(socket);
+  const projectIdRef = useRef(projectId);
+  const currentUserRef = useRef(currentUser);
+
+  useEffect(() => {
+    activeFileIdRef.current = activeFileId;
+  }, [activeFileId]);
+
+  useEffect(() => {
+    socketRef.current = socket;
+  }, [socket]);
+
+  useEffect(() => {
+    projectIdRef.current = projectId;
+  }, [projectId]);
+
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
 
   // Helper to safely format/inject user cursor CSS styles
   useEffect(() => {
@@ -31,39 +52,42 @@ export const useLiveCursor = ({
     Object.values(remoteCursors).forEach((remote) => {
       const { userId, userColor, color, username } = remote;
       const finalColor = userColor || color || "#3b82f6";
-      const uId = userId?.toString();
+      const uId = userId ? userId.toString() : null;
       if (!uId) return;
+
+      const safeName = (username || "Collaborator").replace(/["\\]/g, "");
 
       css += `
         .monaco-remote-caret-${uId} {
           border-left: 2px solid ${finalColor} !important;
-          margin-left: -1px;
-          position: relative;
-          z-index: 10;
+          margin-left: -1px !important;
+          position: absolute !important;
+          height: 100% !important;
+          pointer-events: none !important;
+          z-index: 25 !important;
         }
         .monaco-remote-cursor-tag-${uId} {
-          position: relative;
+          position: absolute !important;
+          top: -18px !important;
+          left: 0 !important;
+          background-color: ${finalColor} !important;
+          color: #ffffff !important;
+          font-size: 10px !important;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+          font-weight: 700 !important;
+          padding: 1px 5px !important;
+          border-radius: 3px 3px 3px 0px !important;
+          white-space: nowrap !important;
+          pointer-events: none !important;
+          z-index: 50 !important;
+          box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4) !important;
+          line-height: 13px !important;
         }
         .monaco-remote-cursor-tag-${uId}::after {
-          content: "${username || "Collaborator"}";
-          position: absolute;
-          top: -18px;
-          left: -2px;
-          background-color: ${finalColor};
-          color: #ffffff;
-          font-size: 10px;
-          font-family: Inter, system-ui, -apple-system, sans-serif;
-          font-weight: 700;
-          padding: 1px 5px;
-          border-radius: 4px 4px 4px 0px;
-          white-space: nowrap;
-          pointer-events: none;
-          z-index: 50;
-          box-shadow: 0 2px 5px rgba(0, 0, 0, 0.35);
-          line-height: 12px;
+          content: "${safeName}" !important;
         }
         .monaco-remote-selection-${uId} {
-          background-color: ${finalColor}35 !important;
+          background-color: ${finalColor}33 !important;
         }
       `;
     });
@@ -98,7 +122,7 @@ export const useLiveCursor = ({
           options: {
             className: `monaco-remote-caret-${userId}`,
             before: {
-              content: "",
+              content: "\u200B", // Zero-width space is required by Monaco to instantiate the inline DOM container
               inlineClassName: `monaco-remote-cursor-tag-${userId}`,
             },
             hoverMessage: {
@@ -125,6 +149,7 @@ export const useLiveCursor = ({
           range: new monaco.Range(selStartLine, selStartCol, selEndLine, selEndCol),
           options: {
             className: `monaco-remote-selection-${userId}`,
+            isWholeLine: false,
           },
         });
       }
@@ -166,30 +191,35 @@ export const useLiveCursor = ({
       return;
     }
 
+    const currentUserId = String(currentUser?.id || currentUser?._id || "");
+
     const handleRemoteCursorMove = (data) => {
-      if (data.fileId !== activeFileId) return;
-      if (currentUser && (data.userId === currentUser.id || data.userId === currentUser._id)) return;
+      if (!data || String(data.fileId) !== String(activeFileIdRef.current)) return;
+      if (currentUserId && String(data.userId) === currentUserId) return;
 
       setRemoteCursors((prev) => ({
         ...prev,
-        [data.userId]: {
+        [String(data.userId)]: {
           ...data,
+          userId: String(data.userId),
           userColor: data.userColor || data.color,
         },
       }));
     };
 
     const handleRemoteSelectionChange = (data) => {
-      if (data.fileId !== activeFileId) return;
-      if (currentUser && (data.userId === currentUser.id || data.userId === currentUser._id)) return;
+      if (!data || String(data.fileId) !== String(activeFileIdRef.current)) return;
+      if (currentUserId && String(data.userId) === currentUserId) return;
 
       setRemoteCursors((prev) => {
-        const existing = prev[data.userId] || {};
+        const uId = String(data.userId);
+        const existing = prev[uId] || {};
         return {
           ...prev,
-          [data.userId]: {
+          [uId]: {
             ...existing,
             ...data,
+            userId: uId,
             userColor: data.userColor || data.color || existing.userColor,
           },
         };
@@ -197,19 +227,19 @@ export const useLiveCursor = ({
     };
 
     const handleRemoteCursorRemove = ({ userId, fileId }) => {
-      if (fileId && fileId !== activeFileId) return;
+      if (fileId && String(fileId) !== String(activeFileIdRef.current)) return;
       setRemoteCursors((prev) => {
         const updated = { ...prev };
-        delete updated[userId];
+        delete updated[String(userId)];
         return updated;
       });
     };
 
     const handleRemoteLeaveFile = ({ userId, fileId }) => {
-      if (fileId && fileId !== activeFileId) return;
+      if (fileId && String(fileId) !== String(activeFileIdRef.current)) return;
       setRemoteCursors((prev) => {
         const updated = { ...prev };
-        delete updated[userId];
+        delete updated[String(userId)];
         return updated;
       });
     };
@@ -229,19 +259,23 @@ export const useLiveCursor = ({
     };
   }, [socket, activeFileId, currentUser, clearAllDecorations]);
 
-  // Throttled emitter for local cursor & selection updates (30-60 FPS)
+  // Emitter for local cursor & selection updates
   const emitCursorPosition = useCallback(() => {
-    if (!socket || !activeFileId || !editorRef.current) return;
-
+    const currentSocket = socketRef.current;
+    const currentActiveFileId = activeFileIdRef.current;
+    const currentProjectId = projectIdRef.current;
     const editor = editorRef.current;
+
+    if (!currentSocket || !currentActiveFileId || !editor) return;
+
     const position = editor.getPosition();
     const selection = editor.getSelection();
 
     if (!position) return;
 
     const payload = {
-      projectId,
-      fileId: activeFileId,
+      projectId: currentProjectId,
+      fileId: currentActiveFileId,
       cursorLine: position.lineNumber,
       cursorColumn: position.column,
       cursorPosition: {
@@ -264,8 +298,8 @@ export const useLiveCursor = ({
         : null,
     };
 
-    socket.emit("cursor-move", payload);
-  }, [socket, activeFileId, projectId, editorRef]);
+    currentSocket.emit("cursor-move", payload);
+  }, [editorRef]);
 
   const handleLocalCursorChange = useCallback(() => {
     pendingCursorEmitRef.current = true;

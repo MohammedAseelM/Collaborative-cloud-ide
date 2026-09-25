@@ -15,7 +15,27 @@ export const useMouseTracking = ({
   const [remotePointers, setRemotePointers] = useState({});
   const animationFrameRef = useRef(null);
   const pendingMouseEmitRef = useRef(null);
-  const currentUserId = currentUser ? String(currentUser.id ?? currentUser._id ?? "") : "";
+
+  const activeFileIdRef = useRef(activeFileId);
+  const socketRef = useRef(socket);
+  const projectIdRef = useRef(projectId);
+  const currentUserRef = useRef(currentUser);
+
+  useEffect(() => {
+    activeFileIdRef.current = activeFileId;
+  }, [activeFileId]);
+
+  useEffect(() => {
+    socketRef.current = socket;
+  }, [socket]);
+
+  useEffect(() => {
+    projectIdRef.current = projectId;
+  }, [projectId]);
+
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
 
   // Auto-hide remote pointers after 3 seconds of inactivity
   useEffect(() => {
@@ -44,14 +64,17 @@ export const useMouseTracking = ({
       return;
     }
 
+    const currentUserId = String(currentUser?.id ?? currentUser?._id ?? "");
+
     const handleRemoteMouseMove = (data) => {
-      if (data.fileId !== activeFileId) return;
+      if (!data || String(data.fileId) !== String(activeFileIdRef.current)) return;
       if (currentUserId && String(data.userId) === currentUserId) return;
 
+      const uId = String(data.userId);
       setRemotePointers((prev) => ({
         ...prev,
-        [String(data.userId)]: {
-          userId: String(data.userId),
+        [uId]: {
+          userId: uId,
           username: data.username || "Collaborator",
           avatar: data.avatar || null,
           userColor: data.userColor || data.color || "#3b82f6",
@@ -63,7 +86,7 @@ export const useMouseTracking = ({
     };
 
     const handleRemoteMouseRemove = ({ userId, fileId }) => {
-      if (fileId && fileId !== activeFileId) return;
+      if (fileId && String(fileId) !== String(activeFileIdRef.current)) return;
       setRemotePointers((prev) => {
         const copy = { ...prev };
         delete copy[String(userId)];
@@ -72,7 +95,7 @@ export const useMouseTracking = ({
     };
 
     const handleRemoteLeaveFile = ({ userId, fileId }) => {
-      if (fileId && fileId !== activeFileId) return;
+      if (fileId && String(fileId) !== String(activeFileIdRef.current)) return;
       setRemotePointers((prev) => {
         const copy = { ...prev };
         delete copy[String(userId)];
@@ -91,12 +114,16 @@ export const useMouseTracking = ({
       socket.off("mouse-remove", handleRemoteMouseRemove);
       socket.off("leave-file", handleRemoteLeaveFile);
     };
-  }, [socket, activeFileId, currentUserId, enabled]);
+  }, [socket, activeFileId, currentUser, enabled]);
 
   // Track local mouse movement over container
   const handleMouseMove = useCallback(
     (e) => {
-      if (!enabled || !socket || !activeFileId || !containerRef?.current) return;
+      const curSocket = socketRef.current;
+      const curActiveFileId = activeFileIdRef.current;
+      const curProjectId = projectIdRef.current;
+
+      if (!enabled || !curSocket || !curActiveFileId || !containerRef?.current) return;
 
       const rect = containerRef.current.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
@@ -119,10 +146,10 @@ export const useMouseTracking = ({
 
       if (!animationFrameRef.current) {
         animationFrameRef.current = requestAnimationFrame(() => {
-          if (pendingMouseEmitRef.current) {
-            socket.emit("mouse-move", {
-              projectId,
-              fileId: activeFileId,
+          if (pendingMouseEmitRef.current && socketRef.current && activeFileIdRef.current) {
+            socketRef.current.emit("mouse-move", {
+              projectId: projectIdRef.current,
+              fileId: activeFileIdRef.current,
               mouseX: pendingMouseEmitRef.current.mouseX,
               mouseY: pendingMouseEmitRef.current.mouseY,
             });
@@ -132,7 +159,7 @@ export const useMouseTracking = ({
         });
       }
     },
-    [enabled, socket, activeFileId, projectId, containerRef]
+    [enabled, containerRef]
   );
 
   // Attach global mousemove listener to container for full-canvas mouse tracking

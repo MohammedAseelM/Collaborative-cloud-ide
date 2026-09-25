@@ -49,6 +49,7 @@ import { fetchProjectFiles, fetchFileContent } from "../services/file.service";
 import { useToast } from "../context/ToastContext";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
+import { useNotification } from "../context/NotificationContext";
 import { WorkspaceSkeleton } from "../components/Skeletons";
 import MemberModal from "../components/MemberModal";
 import DiffModal from "../components/DiffModal";
@@ -252,6 +253,27 @@ const Workspace = () => {
     enabled: isMouseTrackingEnabled,
   });
 
+  const { setActiveChatProjectId, setIsChatOpen: setGlobalIsChatOpen } = useNotification();
+
+  useEffect(() => {
+    setActiveChatProjectId(projectId);
+    setGlobalIsChatOpen(isChatOpen);
+    return () => {
+      setActiveChatProjectId(null);
+      setGlobalIsChatOpen(false);
+    };
+  }, [projectId, isChatOpen, setActiveChatProjectId, setGlobalIsChatOpen]);
+
+  const typingCollaborators = useMemo(() => {
+    const cId = String(currentUser?.id || currentUser?._id || "");
+    return onlineUsers.filter(
+      (u) =>
+        u.isTyping &&
+        u.activeFileId === activeFileId &&
+        String(u.userId) !== cId
+    );
+  }, [onlineUsers, activeFileId, currentUser]);
+
   const handleSelectCollaborator = (user) => {
     setSelectedCollaborator(user);
     setIsProfileModalOpen(true);
@@ -314,6 +336,21 @@ const Workspace = () => {
   // Editor Ref & Monaco Instances
   const isApplyingSocketEdit = useRef(false);
   const typingTimeoutRef = useRef(null);
+  const activeFileIdRef = useRef(activeFileId);
+  const handleLocalCursorChangeRef = useRef(handleLocalCursorChange);
+  const socketRef = useRef(socket);
+
+  useEffect(() => {
+    activeFileIdRef.current = activeFileId;
+  }, [activeFileId]);
+
+  useEffect(() => {
+    handleLocalCursorChangeRef.current = handleLocalCursorChange;
+  }, [handleLocalCursorChange]);
+
+  useEffect(() => {
+    socketRef.current = socket;
+  }, [socket]);
 
   // Fetch Project Details & Flat file system
   const loadProjectAndFiles = useCallback(async () => {
@@ -450,8 +487,11 @@ const Workspace = () => {
     });
 
     socketInstance.on("connect", () => {
-      console.log("[IDE Workspace] Sockets online. Joining project presence room...");
+      console.log("[IDE Workspace] Sockets online. Joining project room...");
       socketInstance.emit("join-project", { projectId });
+      if (activeFileIdRef.current) {
+        socketInstance.emit("join-file", { fileId: activeFileIdRef.current });
+      }
     });
 
     socketInstance.on("connect_error", (err) => {
@@ -461,14 +501,14 @@ const Workspace = () => {
 
     // Receive full file code sync from server
     socketInstance.on("file-sync", ({ fileId, code }) => {
-      if (activeFileId === fileId && editorRef.current) {
+      if (String(activeFileIdRef.current) === String(fileId) && editorRef.current) {
         isApplyingSocketEdit.current = true;
         const model = editorRef.current.getModel();
         if (model) {
           model.setValue(code || "");
           // Clear dirty state on sync
           setOpenTabs((prev) =>
-            prev.map((t) => (t.fileId === fileId ? { ...t, isDirty: false } : t))
+            prev.map((t) => (String(t.fileId) === String(fileId) ? { ...t, isDirty: false } : t))
           );
         }
         isApplyingSocketEdit.current = false;
@@ -477,7 +517,7 @@ const Workspace = () => {
 
     // Receive character-level delta edits
     socketInstance.on("code-change", ({ fileId, userId, rangeOffset, rangeLength, text }) => {
-      if (activeFileId !== fileId || !editorRef.current) return;
+      if (String(activeFileIdRef.current) !== String(fileId) || !editorRef.current) return;
 
       const model = editorRef.current.getModel();
       if (!model) return;
@@ -511,9 +551,9 @@ const Workspace = () => {
 
     // Receive remote typing indicators
     socketInstance.on("typing-update", ({ fileId, userId, username, isTyping }) => {
-      if (activeFileId !== fileId) return;
+      if (String(activeFileIdRef.current) !== String(fileId)) return;
       setOnlineUsers((prev) =>
-        prev.map((u) => (u.userId === userId ? { ...u, isTyping } : u))
+        prev.map((u) => (String(u.userId) === String(userId) ? { ...u, isTyping } : u))
       );
     });
 
@@ -613,7 +653,7 @@ const Workspace = () => {
     return () => {
       socketInstance.disconnect();
     };
-  }, [isLoadingProject, project, projectId, activeFileId, addToast, loadMembersAndInvites, loadProjectAndFiles, currentUser, navigate]);
+  }, [isLoadingProject, project, projectId, addToast, loadMembersAndInvites, loadProjectAndFiles, currentUser, navigate]);
 
   // 2. Tab & File Selection Handlers
   const handleSelectFile = async (file) => {
@@ -656,9 +696,11 @@ const Workspace = () => {
   useEffect(() => {
     if (!activeFileId) return;
 
+    let isSubscribed = true;
     const loadFile = async () => {
       try {
         const data = await fetchFileContent(activeFileId);
+        if (!isSubscribed) return;
         
         // Open file in Editor
         if (editorRef.current) {
@@ -672,29 +714,36 @@ const Workspace = () => {
           socket.emit("join-file", { fileId: activeFileId });
         }
       } catch (err) {
-        addToast("Failed to fetch file content", "error");
+        if (isSubscribed) {
+          addToast("Failed to fetch file content", "error");
+        }
       }
     };
 
     loadFile();
+    return () => {
+      isSubscribed = false;
+    };
   }, [activeFileId, socket, addToast]);
 
   // 3. Local Monaco Change Handlers
   const handleEditorChange = (value, event) => {
-    if (isApplyingSocketEdit.current || !socket || !activeFileId || !canModifyProject) return;
+    const curSocket = socketRef.current;
+    const curActiveFileId = activeFileIdRef.current;
+    if (isApplyingSocketEdit.current || !curSocket || !curActiveFileId || !canModifyProject) return;
 
-    const changes = event.changes;
+    const changes = event?.changes;
     if (!changes || changes.length === 0) return;
 
     // Mark active tab as dirty/modified
     setOpenTabs((prev) =>
-      prev.map((t) => (t.fileId === activeFileId ? { ...t, isDirty: true } : t))
+      prev.map((t) => (t.fileId === curActiveFileId ? { ...t, isDirty: true } : t))
     );
 
     // Emit character deltas to server
     changes.forEach((change) => {
-      socket.emit("code-change", {
-        fileId: activeFileId,
+      curSocket.emit("code-change", {
+        fileId: curActiveFileId,
         rangeOffset: change.rangeOffset,
         rangeLength: change.rangeLength,
         text: change.text,
@@ -702,29 +751,33 @@ const Workspace = () => {
     });
 
     // Emit typing indicator status
-    socket.emit("typing-status", { fileId: activeFileId, isTyping: true });
+    curSocket.emit("typing-status", { fileId: curActiveFileId, isTyping: true });
 
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
     }
     typingTimeoutRef.current = setTimeout(() => {
-      socket.emit("typing-status", { fileId: activeFileId, isTyping: false });
+      if (socketRef.current && activeFileIdRef.current) {
+        socketRef.current.emit("typing-status", { fileId: activeFileIdRef.current, isTyping: false });
+      }
     }, 1000);
   };
 
   // Manual save trigger (emits immediate force-file-sync to save cached state in MongoDB)
   const handleManualSave = useCallback(() => {
-    if (!socket || !activeFileId || !editorRef.current || !canModifyProject) return;
+    const curSocket = socketRef.current;
+    const curActiveFileId = activeFileIdRef.current;
+    if (!curSocket || !curActiveFileId || !editorRef.current || !canModifyProject) return;
     const code = editorRef.current.getValue();
 
-    socket.emit("force-file-sync", { fileId: activeFileId, code });
+    curSocket.emit("force-file-sync", { fileId: curActiveFileId, code });
     
     // Clear dirty indicator
     setOpenTabs((prev) =>
-      prev.map((t) => (t.fileId === activeFileId ? { ...t, isDirty: false } : t))
+      prev.map((t) => (t.fileId === curActiveFileId ? { ...t, isDirty: false } : t))
     );
     addToast("File saved to database", "success");
-  }, [socket, activeFileId, addToast, canModifyProject]);
+  }, [addToast, canModifyProject]);
 
   // Setup Monaco instance commands
   const handleEditorDidMount = (editor, monaco) => {
@@ -732,8 +785,8 @@ const Workspace = () => {
     monacoRef.current = monaco;
 
     // The first file can load before Monaco mounts; sync it again once the editor is ready.
-    if (activeFileId) {
-      fetchFileContent(activeFileId)
+    if (activeFileIdRef.current) {
+      fetchFileContent(activeFileIdRef.current)
         .then((data) => {
           if (editorRef.current === editor) {
             isApplyingSocketEdit.current = true;
@@ -747,11 +800,19 @@ const Workspace = () => {
     }
 
     editor.onDidChangeCursorPosition(() => {
-      handleLocalCursorChange();
+      handleLocalCursorChangeRef.current?.();
     });
     editor.onDidChangeCursorSelection(() => {
-      handleLocalCursorChange();
+      handleLocalCursorChangeRef.current?.();
     });
+    editor.onDidBlurEditorText(() => {
+      if (socketRef.current && activeFileIdRef.current) {
+        socketRef.current.emit("typing-status", { fileId: activeFileIdRef.current, isTyping: false });
+      }
+    });
+
+    // Broadcast initial cursor position once editor mounts
+    handleLocalCursorChangeRef.current?.();
 
     // Bind Ctrl+S / Cmd+S save command shortcut
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
@@ -1663,6 +1724,17 @@ const Workspace = () => {
               </div>
             ))}
           </div>
+
+          {/* Live Typing Indicator Banner */}
+          {typingCollaborators.length > 0 && (
+            <div className="h-6 px-3 bg-indigo-950/40 border-b border-indigo-900/30 flex items-center gap-2 text-[11px] text-indigo-300 select-none animate-fade-in shrink-0">
+              <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-ping" />
+              <span className="font-medium">
+                {typingCollaborators.map((u) => u.name).join(", ")}{" "}
+                {typingCollaborators.length === 1 ? "is" : "are"} typing in {activeFile?.name || "this file"}...
+              </span>
+            </div>
+          )}
 
           {/* Main Work Area: Monaco Editor + Live Preview Panel Split */}
           <div className="flex-1 min-h-0 flex bg-slate-950">

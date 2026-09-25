@@ -1,31 +1,16 @@
 // src/components/InvitationsInbox.jsx
 // Responsibility: Render pending project collaboration invites in a clean list on the Dashboard page.
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Mail, Check, X, Loader2 } from "lucide-react";
-import { fetchUserInvitations, acceptInvitationByIdRequest, rejectInvitationRequest } from "../services/invitation.service";
+import { acceptInvitationByIdRequest, rejectInvitationRequest } from "../services/invitation.service";
 import { useToast } from "../context/ToastContext";
+import { useNotification } from "../context/NotificationContext";
 
 const InvitationsInbox = ({ onAcceptSuccess }) => {
   const { addToast } = useToast();
-  const [invites, setInvites] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const { invitations: invites, refreshInvitations } = useNotification();
   const [actioningId, setActioningId] = useState(null); // track which invite is loading an action
-
-  const loadInvitations = async () => {
-    try {
-      const data = await fetchUserInvitations();
-      setInvites(data.invitations || []);
-    } catch (err) {
-      console.error("Failed to load user invitations:", err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadInvitations();
-  }, []);
 
   const handleAccept = async (inviteId) => {
     setActioningId(inviteId);
@@ -33,8 +18,7 @@ const InvitationsInbox = ({ onAcceptSuccess }) => {
       await acceptInvitationByIdRequest(inviteId);
       addToast("Successfully joined project workspace!", "success");
       
-      // Filter out of local state
-      setInvites((prev) => prev.filter((i) => i._id !== inviteId));
+      refreshInvitations();
 
       // Trigger dashboard project reload
       if (onAcceptSuccess) {
@@ -52,9 +36,7 @@ const InvitationsInbox = ({ onAcceptSuccess }) => {
     try {
       await rejectInvitationRequest(inviteId);
       addToast("Invitation declined", "info");
-      
-      // Filter out of local state
-      setInvites((prev) => prev.filter((i) => i._id !== inviteId));
+      refreshInvitations();
     } catch (err) {
       addToast("Failed to decline invitation", "error");
     } finally {
@@ -62,16 +44,7 @@ const InvitationsInbox = ({ onAcceptSuccess }) => {
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="bg-slate-900/30 border border-slate-900 rounded-xl p-6 flex flex-col items-center justify-center text-slate-500 gap-2">
-        <Loader2 size={16} className="animate-spin text-indigo-500" />
-        <span className="text-xs">Checking invitations inbox...</span>
-      </div>
-    );
-  }
-
-  if (invites.length === 0) return null; // hide if empty
+  if (!invites || invites.length === 0) return null; // hide if empty
 
   return (
     <div className="bg-slate-900/30 border border-slate-900 rounded-xl p-5 space-y-4">
