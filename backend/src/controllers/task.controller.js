@@ -154,7 +154,7 @@ export const createProjectTask = async (req, res, next) => {
 
 /**
  * @route   PATCH /api/projects/:projectId/tasks/:taskId/status
- * @desc    Update task status (pending | in_progress | completed)
+ * @desc    Update task status (pending | in_progress | completed | blocked)
  * @access  Private (Assignee, Admin, Owner)
  */
 export const updateTaskStatus = async (req, res, next) => {
@@ -169,17 +169,22 @@ export const updateTaskStatus = async (req, res, next) => {
       throw error;
     }
 
-    const { status } = req.body;
-    if (!["pending", "in_progress", "completed"].includes(status)) {
-      const error = new Error("Invalid status. Must be pending, in_progress, or completed.");
+    const rawStatus = req.body.status;
+    let normalizedStatus = typeof rawStatus === "string" 
+      ? rawStatus.toLowerCase().trim().replace(/[\s-]+/g, "_") 
+      : "";
+
+    if (!["pending", "in_progress", "completed", "blocked"].includes(normalizedStatus)) {
+      const error = new Error("Invalid status. Must be pending, in_progress, completed, or blocked.");
       error.statusCode = 400;
       throw error;
     }
 
     // Assignee, Owner, or Admin can update task status
-    const isAssignee = task.assignedTo.toString() === req.user._id.toString();
+    const isAssignee = task.assignedTo && task.assignedTo.toString() === req.user._id.toString();
     const isOwner = project.owner.toString() === req.user._id.toString();
-    const isAdmin = project.memberRoles?.get(req.user._id.toString()) === "Admin";
+    const memberRole = project.memberRoles?.get ? project.memberRoles.get(req.user._id.toString()) : project.memberRoles?.[req.user._id.toString()];
+    const isAdmin = memberRole === "Admin";
 
     if (!isAssignee && !isOwner && !isAdmin) {
       const error = new Error("You are not authorized to update this task");
@@ -187,7 +192,7 @@ export const updateTaskStatus = async (req, res, next) => {
       throw error;
     }
 
-    task.status = status;
+    task.status = normalizedStatus;
     await task.save();
 
     const populatedTask = await Task.findById(task._id)

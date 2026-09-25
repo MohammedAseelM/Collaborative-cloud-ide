@@ -2,9 +2,9 @@
 // Responsibility: Instant interactive popup alert when an invitation or task assignment
 // is received in real-time, allowing immediate Accept/Decline or View actions without refreshing.
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Mail, CheckSquare, X, Check, ArrowRight, Loader2, Clock, Shield } from "lucide-react";
+import { Mail, CheckSquare, X, Check, ArrowRight, Loader2, Clock } from "lucide-react";
 import { useNotification } from "../context/NotificationContext";
 import { acceptInvitationByIdRequest, rejectInvitationRequest } from "../services/invitation.service";
 import { useToast } from "../context/ToastContext";
@@ -20,6 +20,30 @@ export const RealtimeAlertModal = () => {
   } = useNotification();
 
   const [isProcessing, setIsProcessing] = useState(false);
+  const [progress, setProgress] = useState(100);
+
+  // Auto-dismiss popup in 7 seconds with animated timer bar
+  useEffect(() => {
+    if (!activePopup) return;
+    setProgress(100);
+
+    const duration = 7000; // 7 seconds
+    const intervalTime = 50; // update every 50ms
+    const decrement = (intervalTime / duration) * 100;
+
+    const timer = setInterval(() => {
+      setProgress((prev) => {
+        if (prev <= decrement) {
+          clearInterval(timer);
+          closePopup();
+          return 0;
+        }
+        return prev - decrement;
+      });
+    }, intervalTime);
+
+    return () => clearInterval(timer);
+  }, [activePopup, closePopup]);
 
   if (!activePopup) return null;
 
@@ -35,7 +59,7 @@ export const RealtimeAlertModal = () => {
       refreshNotifications();
       closePopup();
       if (activePopup.data.projectId) {
-        navigate(`/workspace/${activePopup.data.projectId}`);
+        navigate(`/project/${activePopup.data.projectId}`);
       }
     } catch (err) {
       addToast(err.response?.data?.message || "Failed to accept invitation", "error");
@@ -66,7 +90,7 @@ export const RealtimeAlertModal = () => {
     const pId = activePopup.data?.projectId || activePopup.data?.task?.project;
     closePopup();
     if (pId) {
-      navigate(`/workspace/${pId}`);
+      navigate(`/project/${pId}?tab=tasks&modal=collaborators`);
     }
   };
 
@@ -125,7 +149,7 @@ export const RealtimeAlertModal = () => {
               {activePopup.data?.expiresAt && (
                 <div className="flex items-center gap-1.5 text-[10px] text-slate-500 pt-1">
                   <Clock size={11} />
-                  <span>Valid for 7 days</span>
+                  <span>Auto-dismiss in 7s · Valid for 7 days</span>
                 </div>
               )}
             </>
@@ -194,9 +218,9 @@ export const RealtimeAlertModal = () => {
             <>
               <button
                 onClick={handleOpenTaskProject}
-                className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 px-3.5 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-600/30 transition-all cursor-pointer"
+                className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 px-3.5 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-600/30 transition-all cursor-pointer"
               >
-                <span>View in Workspace</span>
+                <span>Open Tasks</span>
                 <ArrowRight size={13} />
               </button>
               <button
@@ -207,6 +231,16 @@ export const RealtimeAlertModal = () => {
               </button>
             </>
           )}
+        </div>
+
+        {/* Auto-Dismiss Progress Bar */}
+        <div className="absolute bottom-0 left-0 right-0 h-1 bg-slate-900/80 overflow-hidden">
+          <div
+            className={`h-full transition-all duration-75 linear ${
+              isInvite ? "bg-indigo-500" : "bg-purple-500"
+            }`}
+            style={{ width: `${progress}%` }}
+          />
         </div>
       </div>
     </div>

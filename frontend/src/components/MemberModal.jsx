@@ -67,10 +67,25 @@ const PRIORITY_STYLES = {
 };
 
 const STATUS_STYLES = {
+  pending: "border-amber-500/30 bg-amber-500/10 text-amber-300",
+  in_progress: "border-indigo-500/30 bg-indigo-500/10 text-indigo-300",
+  completed: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+  blocked: "border-rose-500/30 bg-rose-500/10 text-rose-300",
   Pending: "border-amber-500/30 bg-amber-500/10 text-amber-300",
   "In Progress": "border-indigo-500/30 bg-indigo-500/10 text-indigo-300",
   Completed: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
   Blocked: "border-rose-500/30 bg-rose-500/10 text-rose-300",
+};
+
+const formatStatusLabel = (status = "") => {
+  const map = {
+    pending: "Pending",
+    in_progress: "In Progress",
+    completed: "Completed",
+    blocked: "Blocked",
+  };
+  const key = typeof status === "string" ? status.toLowerCase().replace(/[\s-]+/g, "_") : "";
+  return map[key] || status || "Pending";
 };
 
 const getAvatarColor = (name = "") => {
@@ -119,6 +134,7 @@ const describeActivity = (activity) => {
 export default function MemberModal({
   isOpen,
   onClose,
+  initialTab = "team",
   projectId,
   userRole,
   currentUserId,
@@ -129,7 +145,13 @@ export default function MemberModal({
   onOpenDiff,
 }) {
   const { addToast } = useToast();
-  const [activeTab, setActiveTab] = useState("team"); // "team" | "versions" | "timeline"
+  const [activeTab, setActiveTab] = useState(initialTab || "team"); // "team" | "tasks" | "versions" | "timeline"
+
+  useEffect(() => {
+    if (isOpen && initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [isOpen, initialTab]);
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
 
   // Data states
@@ -455,7 +477,7 @@ export default function MemberModal({
   const handleStatusChange = async (taskId, nextStatus) => {
     try {
       await updateTaskStatusRequest(projectId, taskId, nextStatus);
-      addToast(`Task marked as ${nextStatus}`, "success");
+      addToast(`Task marked as ${formatStatusLabel(nextStatus)}`, "success");
       loadTasks();
     } catch (error) {
       addToast(error.response?.data?.message || "Failed to update task status", "error");
@@ -877,24 +899,24 @@ export default function MemberModal({
                             {/* Status selector */}
                             {canChangeStatus ? (
                               <select
-                                value={task.status}
+                                value={task.status ? task.status.toLowerCase().replace(/[\s-]+/g, "_") : "pending"}
                                 onChange={(e) => handleStatusChange(task._id, e.target.value)}
                                 className={`text-xs px-2.5 py-1 rounded-lg border font-semibold bg-slate-950 cursor-pointer focus:outline-none ${
-                                  STATUS_STYLES[task.status] || STATUS_STYLES.Pending
+                                  STATUS_STYLES[task.status] || STATUS_STYLES.pending
                                 }`}
                               >
-                                <option value="Pending">Pending</option>
-                                <option value="In Progress">In Progress</option>
-                                <option value="Completed">Completed</option>
-                                <option value="Blocked">Blocked</option>
+                                <option value="pending">Pending</option>
+                                <option value="in_progress">In Progress</option>
+                                <option value="completed">Completed</option>
+                                <option value="blocked">Blocked</option>
                               </select>
                             ) : (
                               <span
                                 className={`px-2.5 py-1 text-xs font-semibold rounded-lg border ${
-                                  STATUS_STYLES[task.status] || STATUS_STYLES.Pending
+                                  STATUS_STYLES[task.status] || STATUS_STYLES.pending
                                 }`}
                               >
-                                {task.status}
+                                {formatStatusLabel(task.status)}
                               </span>
                             )}
 

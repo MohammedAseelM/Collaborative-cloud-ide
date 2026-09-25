@@ -3,7 +3,7 @@
 // Monaco Editor with Ctrl+S commands, Socket.io presence indicators, and execution sandboxes.
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useParams, Link, useNavigate, useSearchParams } from "react-router-dom";
 import { io } from "socket.io-client";
 import Editor from "@monaco-editor/react";
 import {
@@ -219,14 +219,28 @@ const Workspace = () => {
   // Editor Ref & Monaco Instances
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Modals & Side panels Toggles
   const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
+  const [memberModalInitialTab, setMemberModalInitialTab] = useState("team");
   const [selectedCollaborator, setSelectedCollaborator] = useState(null);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const isMouseTrackingEnabled = !isProfileModalOpen && !isMemberModalOpen && !isChatOpen;
+
+  // Automatically open MemberModal if specified in URL (e.g. ?tab=tasks&modal=collaborators)
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    const modal = searchParams.get("modal");
+    if (modal === "collaborators" || tab === "tasks" || tab === "team" || tab === "versions" || tab === "timeline") {
+      if (tab) {
+        setMemberModalInitialTab(tab);
+      }
+      setIsMemberModalOpen(true);
+    }
+  }, [searchParams]);
 
   const isReactProject = useMemo(() => {
     return project?.projectType === "react-vite" || files.some((f) => f.name === "package.json");
@@ -1834,7 +1848,16 @@ const Workspace = () => {
 
       <MemberModal
         isOpen={isMemberModalOpen}
-        onClose={() => setIsMemberModalOpen(false)}
+        onClose={() => {
+          setIsMemberModalOpen(false);
+          if (searchParams.get("modal") || searchParams.get("tab")) {
+            const nextParams = new URLSearchParams(searchParams);
+            nextParams.delete("modal");
+            nextParams.delete("tab");
+            setSearchParams(nextParams, { replace: true });
+          }
+        }}
+        initialTab={memberModalInitialTab}
         projectId={projectId}
         userRole={userRole}
         currentUserId={currentUser?.id}
