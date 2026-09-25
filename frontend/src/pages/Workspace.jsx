@@ -263,6 +263,7 @@ const Workspace = () => {
     activeFileId,
     projectId,
     containerRef: editorContainerRef,
+    editorRef,
     currentUser,
     enabled: isMouseTrackingEnabled,
   });
@@ -1759,7 +1760,7 @@ const Workspace = () => {
               className="flex-1 min-h-0 bg-slate-950 relative overflow-hidden"
             >
               {/* Live Mouse Pointers Overlay */}
-              <LiveMousePointers remotePointers={remotePointers} />
+              <LiveMousePointers remotePointers={remotePointers} editorRef={editorRef} />
 
               {activeFileId ? (
                 <Editor

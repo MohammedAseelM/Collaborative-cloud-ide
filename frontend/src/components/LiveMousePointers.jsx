@@ -1,28 +1,75 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 
 /**
  * LiveMousePointers Component
  * Renders smooth floating SVG mouse cursors for remote collaborators over the editor workspace.
- * Uses top/left percentage positioning relative to parent container so the cursor moves freely across the whole pane.
+ * When pointing at code, aligns precisely with the editor's scrolled line and column position.
  */
-export const LiveMousePointers = ({ remotePointers = {} }) => {
+export const LiveMousePointers = ({ remotePointers = {}, editorRef }) => {
   const pointers = Object.values(remotePointers);
+  const [, setScrollTick] = useState(0);
+
+  // Re-calculate positions whenever Monaco Editor scrolls
+  useEffect(() => {
+    const editor = editorRef?.current;
+    if (!editor || typeof editor.onDidScrollChange !== "function") return;
+
+    const disposable = editor.onDidScrollChange(() => {
+      setScrollTick((t) => (t + 1) % 10000);
+    });
+
+    return () => {
+      disposable?.dispose?.();
+    };
+  }, [editorRef]);
 
   if (pointers.length === 0) return null;
 
   return (
     <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden">
       {pointers.map((pointer) => {
-        const { userId, username, userColor, mouseX, mouseY } = pointer;
+        const {
+          userId,
+          username,
+          userColor,
+          mouseX,
+          mouseY,
+          lineNumber,
+          column,
+          offsetX = 0,
+          offsetY = 0,
+        } = pointer;
         const color = userColor || "#3b82f6";
+
+        let leftStyle = `${mouseX}%`;
+        let topStyle = `${mouseY}%`;
+        let isVisible = true;
+
+        // If line & column are tracked from collaborator, align with code line position
+        if (lineNumber && column && editorRef?.current) {
+          try {
+            const vis = editorRef.current.getScrolledVisiblePosition({ lineNumber, column });
+            if (vis) {
+              leftStyle = `${vis.left + (offsetX || 0)}px`;
+              topStyle = `${vis.top + (offsetY || 0)}px`;
+            } else {
+              // Line is currently outside the scrolled viewport, hide to avoid false line overlap
+              isVisible = false;
+            }
+          } catch {
+            // Fallback to viewport relative percentage
+          }
+        }
+
+        if (!isVisible) return null;
 
         return (
           <div
             key={userId}
             className="absolute transition-all duration-75 ease-out flex items-start gap-1 pointer-events-none select-none"
             style={{
-              left: `${mouseX}%`,
-              top: `${mouseY}%`,
+              left: leftStyle,
+              top: topStyle,
               willChange: "left, top",
             }}
           >

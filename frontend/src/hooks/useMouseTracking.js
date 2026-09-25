@@ -9,6 +9,7 @@ export const useMouseTracking = ({
   activeFileId,
   projectId,
   containerRef,
+  editorRef,
   currentUser,
   enabled = true,
 }) => {
@@ -80,6 +81,10 @@ export const useMouseTracking = ({
           userColor: data.userColor || data.color || "#3b82f6",
           mouseX: data.mouseX,
           mouseY: data.mouseY,
+          lineNumber: data.lineNumber,
+          column: data.column,
+          offsetX: data.offsetX,
+          offsetY: data.offsetY,
           timestamp: Date.now(),
         },
       }));
@@ -122,13 +127,14 @@ export const useMouseTracking = ({
       const curSocket = socketRef.current;
       const curActiveFileId = activeFileIdRef.current;
       const curProjectId = projectIdRef.current;
+      const editor = editorRef?.current;
 
       if (!enabled || !curSocket || !curActiveFileId || !containerRef?.current) return;
 
       const rect = containerRef.current.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
 
-      // Check if mouse position is within container bounds (with slight padding allowance)
+      // Check if mouse position is within container bounds
       if (
         e.clientX < rect.left - 20 ||
         e.clientX > rect.right + 20 ||
@@ -142,7 +148,41 @@ export const useMouseTracking = ({
       const mouseX = Math.min(Math.max(((e.clientX - rect.left) / rect.width) * 100, 0), 100);
       const mouseY = Math.min(Math.max(((e.clientY - rect.top) / rect.height) * 100, 0), 100);
 
-      pendingMouseEmitRef.current = { mouseX, mouseY };
+      let lineNumber = null;
+      let column = null;
+      let offsetX = 0;
+      let offsetY = 0;
+
+      if (editor && typeof editor.getTargetAtClientPoint === "function") {
+        try {
+          const target = editor.getTargetAtClientPoint(e.clientX, e.clientY);
+          if (target && target.position) {
+            lineNumber = target.position.lineNumber;
+            column = target.position.column;
+
+            if (typeof editor.getScrolledVisiblePosition === "function") {
+              const visPos = editor.getScrolledVisiblePosition(target.position);
+              if (visPos) {
+                const clientXInContainer = e.clientX - rect.left;
+                const clientYInContainer = e.clientY - rect.top;
+                offsetX = clientXInContainer - visPos.left;
+                offsetY = clientYInContainer - visPos.top;
+              }
+            }
+          }
+        } catch {
+          // Gracefully continue with viewport percentage
+        }
+      }
+
+      pendingMouseEmitRef.current = {
+        mouseX,
+        mouseY,
+        lineNumber,
+        column,
+        offsetX,
+        offsetY,
+      };
 
       if (!animationFrameRef.current) {
         animationFrameRef.current = requestAnimationFrame(() => {
@@ -152,6 +192,10 @@ export const useMouseTracking = ({
               fileId: activeFileIdRef.current,
               mouseX: pendingMouseEmitRef.current.mouseX,
               mouseY: pendingMouseEmitRef.current.mouseY,
+              lineNumber: pendingMouseEmitRef.current.lineNumber,
+              column: pendingMouseEmitRef.current.column,
+              offsetX: pendingMouseEmitRef.current.offsetX,
+              offsetY: pendingMouseEmitRef.current.offsetY,
             });
             pendingMouseEmitRef.current = null;
           }
@@ -159,7 +203,7 @@ export const useMouseTracking = ({
         });
       }
     },
-    [enabled, containerRef]
+    [enabled, containerRef, editorRef]
   );
 
   // Attach global mousemove listener to container for full-canvas mouse tracking

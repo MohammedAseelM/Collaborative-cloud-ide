@@ -516,7 +516,7 @@ export const registerSocketHandlers = (io) => {
 
     // 4.6 Mouse Pointer Movement Tracking in File room
     socket.on("mouse-move", (payload = {}) => {
-      const { fileId, mouseX, mouseY } = payload;
+      const { fileId, mouseX, mouseY, lineNumber, column, offsetX, offsetY } = payload;
       const rawTarget = fileId || socket.activeFileId;
       const targetFileId = rawTarget ? rawTarget.toString() : null;
       if (!targetFileId) return;
@@ -534,6 +534,10 @@ export const registerSocketHandlers = (io) => {
         avatar: socket.user.avatar || null,
         mouseX,
         mouseY,
+        lineNumber: lineNumber ?? null,
+        column: column ?? null,
+        offsetX: offsetX ?? 0,
+        offsetY: offsetY ?? 0,
         userColor: socket.userColor || CURSOR_COLORS[0],
         color: socket.userColor || CURSOR_COLORS[0],
         timestamp: Date.now(),
