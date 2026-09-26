@@ -4,6 +4,11 @@
 
 @import "tailwindcss";
 
+/* ThemeProvider toggles `.dark` / `.light` on <html>. Without this,
+   Tailwind v4 treats `dark:` as prefers-color-scheme and light-theme
+   explorer/tab labels can stay pale on a white background. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 body {
   margin: 0;
   font-family: system-ui, "Segoe UI", Roboto, sans-serif;
@@ -38,6 +43,15 @@ body {
 .light [class~="text-slate-300"] { color: #1e293b !important; }
 .light [class~="text-slate-400"] { color: #334155 !important; }
 .light [class~="text-slate-500"] { color: #475569 !important; }
+.light [class~="text-slate-600"] { color: #334155 !important; }
+.light [class~="text-slate-700"] { color: #1e293b !important; }
+.light [class~="text-slate-800"] { color: #1e293b !important; }
+.light [class~="text-slate-900"] { color: #0f172a !important; }
+
+.light [class~="bg-indigo-950/40"] { background-color: #e0e7ff !important; }
+.light [class~="text-indigo-200"],
+.light [class~="text-indigo-300"] { color: #3730a3 !important; }
+.light [class~="text-indigo-700"] { color: #312e81 !important; }
 
 .light [class~="hover:bg-slate-800"]:hover,
 .light [class~="hover:bg-slate-900"]:hover { background-color: #e2e8f0 !important; }

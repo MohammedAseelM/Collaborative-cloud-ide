@@ -311,7 +311,7 @@ const Dashboard = () => {
         onCreateSuccess={(newProject) => {
           refresh();
           if (newProject?._id) {
-            navigate(`/workspace/${newProject._id}`);
+            navigate(`/project/${newProject._id}`);
           }
         }}
       />

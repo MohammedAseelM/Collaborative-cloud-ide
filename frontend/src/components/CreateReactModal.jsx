@@ -2,6 +2,7 @@
 // Responsibility: Modal dialog allowing users to create a new React + Vite project.
 
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { X, Layers, Loader2 } from "lucide-react";
 import { createReactProjectRequest } from "../services/reactProject.service";
 import { useToast } from "../context/ToastContext";
@@ -11,6 +12,7 @@ export default function CreateReactModal({ isOpen, onClose, onCreateSuccess }) {
   const [template, setTemplate] = useState("react-vite");
   const [isLoading, setIsLoading] = useState(false);
   const { addToast } = useToast();
+  const navigate = useNavigate();
 
   if (!isOpen) return null;
 
@@ -32,8 +34,12 @@ export default function CreateReactModal({ isOpen, onClose, onCreateSuccess }) {
       const res = await createReactProjectRequest(trimmed);
       addToast(`React project "${trimmed}" created successfully!`, "success");
       setProjectName("");
-      if (onCreateSuccess) onCreateSuccess(res.project);
       onClose();
+      if (onCreateSuccess) {
+        onCreateSuccess(res.project);
+      } else if (res.project?._id) {
+        navigate(`/project/${res.project._id}`);
+      }
     } catch (err) {
       addToast(err.response?.data?.message || "Failed to create React project.", "error");
     } finally {

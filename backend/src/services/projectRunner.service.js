@@ -409,10 +409,16 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
     FORCE_COLOR: "true",
   };
 
-  // Adjust startCommand to pass port if Vite / Next.js
+  // Adjust startCommand to pass port if Vite / Next.js.
+  // `npm run dev` does not contain "vite", so without this Vite binds 5173
+  // and collides with the IDE frontend.
   let finalCmd = startCmd;
-  if (finalCmd.includes("vite") || finalCmd.includes("preview")) {
-    finalCmd = `${startCmd} -- --port ${allocatedPort} --host`;
+  const isViteProject =
+    project?.projectType === "react-vite" ||
+    finalCmd.includes("vite") ||
+    /\bnpm run (dev|preview)\b/.test(finalCmd);
+  if (isViteProject) {
+    finalCmd = `${startCmd} -- --port ${allocatedPort} --host 0.0.0.0`;
   } else if (finalCmd.includes("next")) {
     finalCmd = `${startCmd} -- -p ${allocatedPort}`;
   }

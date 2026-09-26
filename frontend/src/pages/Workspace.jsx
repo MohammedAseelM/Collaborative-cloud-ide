@@ -1711,6 +1711,7 @@ const Workspace = () => {
               onOpenPreview={() => setIsPreviewOpen(true)}
               onRefreshFiles={refreshProjectFiles}
               onDeleteProject={() => navigate("/dashboard")}
+              onCreateProjectSuccess={(newProj) => navigate(`/project/${newProj._id}`)}
             />
           )}
 
@@ -1722,12 +1723,27 @@ const Workspace = () => {
                 onClick={() => handleSelectFile(files.find((f) => f._id === tab.fileId))}
                 className={`group flex items-center h-full px-4 border-r border-slate-900 text-xs gap-2 select-none cursor-pointer transition-colors ${
                   activeFileId === tab.fileId
-                    ? "bg-slate-900/60 text-slate-100 font-semibold border-t-2 border-t-indigo-500"
-                    : "text-slate-500 hover:bg-slate-900/20 hover:text-slate-300"
+                    ? "bg-slate-100 dark:bg-slate-900/60 text-slate-900 dark:text-slate-100 font-semibold border-t-2 border-t-indigo-500"
+                    : "text-slate-800 dark:text-slate-300 font-medium hover:bg-slate-100/50 dark:hover:bg-slate-900/20 hover:text-slate-900 dark:hover:text-slate-100"
                 }`}
               >
-                <FileText size={13} className="text-slate-400 shrink-0" />
-                <span>{tab.name}</span>
+                <FileText
+                  size={13}
+                  className={
+                    activeFileId === tab.fileId
+                      ? "text-indigo-600 dark:text-indigo-400 shrink-0"
+                      : "text-slate-500 shrink-0"
+                  }
+                />
+                <span
+                  className={
+                    activeFileId === tab.fileId
+                      ? "font-semibold text-slate-800 dark:text-slate-100"
+                      : "font-medium text-slate-800 dark:text-slate-300 group-hover:text-slate-900 dark:group-hover:text-slate-100"
+                  }
+                >
+                  {tab.name}
+                </span>
                 {tab.isDirty && (
                   <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 shrink-0" title="Unsaved changes" />
                 )}

@@ -208,7 +208,7 @@ export default function ImportProjectModal({
         setTimeout(() => {
           setIsUploading(false);
           onClose();
-          navigate(`/workspace/${res.project._id}`);
+          navigate(`/project/${res.project._id}`);
         }, 1200);
       }
     } catch (err) {

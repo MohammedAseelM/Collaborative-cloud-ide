@@ -279,8 +279,8 @@ const FileExplorer = ({ projectId, files, activeFileId, onSelectFile, refreshFil
         ) : (
           <div
             onClick={() => (node.isFolder ? toggleFolder(node._id) : onSelectFile(node))}
-            className={`group flex items-center justify-between py-1.5 pr-2 hover:bg-slate-900/60 rounded cursor-pointer relative overflow-hidden transition-all ${
-              isSelected ? "bg-indigo-950/40 border-l-2 border-indigo-500" : ""
+            className={`group flex items-center justify-between py-1.5 pr-2 hover:bg-slate-100/70 dark:hover:bg-slate-900/60 rounded cursor-pointer relative overflow-hidden transition-all ${
+              isSelected ? "bg-indigo-50 dark:bg-indigo-950/40 border-l-2 border-indigo-500" : ""
             }`}
             style={{ paddingLeft: `${depth * 12 + 6}px` }}
           >
@@ -299,7 +299,13 @@ const FileExplorer = ({ projectId, files, activeFileId, onSelectFile, refreshFil
               ) : (
                 getFileIcon(node.name)
               )}
-              <span className={`text-xs truncate ${isSelected ? "text-indigo-300 font-medium" : "text-slate-300"}`}>
+              <span
+                className={`text-xs truncate transition-colors ${
+                  isSelected
+                    ? "text-slate-800 dark:text-slate-100 font-semibold"
+                    : "text-slate-800 dark:text-slate-200 font-medium group-hover:text-slate-900 dark:group-hover:text-white"
+                }`}
+              >
                 {node.name}
               </span>
             </div>
@@ -407,7 +413,7 @@ const FileExplorer = ({ projectId, files, activeFileId, onSelectFile, refreshFil
       {/* File Explorer Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-slate-900 bg-slate-950 shrink-0">
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+          <span className="text-[10px] font-extrabold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
             Workspace Files
           </span>
           <div className="flex items-center gap-1">
