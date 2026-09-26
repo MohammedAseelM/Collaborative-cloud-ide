@@ -15,7 +15,7 @@ import {
   Loader2,
   AlertTriangle,
   Globe,
-  Sparkles,
+  Layers,
 } from "lucide-react";
 
 export default function LivePreviewPanel({
@@ -177,7 +177,7 @@ export default function LivePreviewPanel({
             <div className="relative">
               <div className="w-16 h-16 rounded-full border-4 border-cyan-500/20 border-t-cyan-400 animate-spin" />
               <div className="absolute inset-0 flex items-center justify-center text-cyan-400">
-                <Sparkles className="w-6 h-6 animate-pulse" />
+                <Layers className="w-6 h-6 animate-pulse" />
               </div>
             </div>
             <div>

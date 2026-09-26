@@ -56,3 +56,37 @@ export const protect = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * Optional authentication middleware: if a token exists and is valid, attaches
+ * req.user. If no token exists or token is invalid, continues without throwing 401.
+ */
+export const optionalProtect = async (req, res, next) => {
+  try {
+    let token;
+
+    if (req.cookies && req.cookies.token) {
+      token = req.cookies.token;
+    } else if (
+      req.headers.authorization &&
+      req.headers.authorization.startsWith("Bearer ")
+    ) {
+      token = req.headers.authorization.split(" ")[1];
+    }
+
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, env.JWT_SECRET);
+        const user = await User.findById(decoded.userId).select("-password");
+        if (user) {
+          req.user = user;
+        }
+      } catch (jwtErr) {
+        // Token invalid/expired - allow request to proceed as anonymous
+      }
+    }
+    next();
+  } catch (error) {
+    next();
+  }
+};

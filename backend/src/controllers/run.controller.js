@@ -193,14 +193,8 @@ export const executeCodeInSandbox = async (language, code, input) => {
   const dockerOk = await checkDockerRunning();
   let useMockFallback = false;
   if (!dockerOk) {
-    if (process.env.NODE_ENV === "development" || env.NODE_ENV === "development") {
-      useMockFallback = true;
-      logger.warn("Docker daemon is offline. Falling back to local execution runner for development.");
-    } else {
-      const error = new Error("Docker service is not running on the server. Please ensure Docker Desktop is started.");
-      error.statusCode = 503;
-      throw error;
-    }
+    useMockFallback = true;
+    logger.warn("Docker daemon is offline. Falling back to local execution / Wandbox runner.");
   }
 
   // 2. Setup isolated temp directory for this run

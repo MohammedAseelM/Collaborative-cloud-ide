@@ -1202,6 +1202,7 @@ const Workspace = () => {
 
   const currentLanguageLabel = useMemo(() => {
     if (!project) return "";
+    if (project.projectType === "react-vite" || project.projectType === "react" || project.language === "react") return "React";
     return project.language === "cpp" ? "C++" : project.language === "c" ? "C" : project.language;
   }, [project]);
 

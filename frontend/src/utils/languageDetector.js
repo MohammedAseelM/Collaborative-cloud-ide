@@ -59,7 +59,7 @@ export const detectFrameworkType = (fileList = []) => {
     if (names.some((n) => n.endsWith(".tsx") || n.endsWith(".ts"))) {
       return { type: "react-ts", name: "React (TypeScript)", badgeColor: "bg-blue-900/60 text-blue-300 border-blue-700", icon: "⚡" };
     }
-    return { type: "react-js", name: "React (JavaScript)", badgeColor: "bg-cyan-900/60 text-cyan-300 border-cyan-700", icon: "⚛️" };
+    return { type: "react-js", name: "React", badgeColor: "bg-cyan-900/60 text-cyan-300 border-cyan-700", icon: "⚛️" };
   }
 
   if (names.includes("requirements.txt") || names.some((n) => n.endsWith(".py"))) {

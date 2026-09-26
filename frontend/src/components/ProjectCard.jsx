@@ -105,7 +105,13 @@ const ProjectCard = ({ project, onEdit, onDelete, onFavorite, onArchive, current
 
       <div className="flex items-center justify-between gap-2 mt-4 pr-7 text-xs text-slate-500 relative z-10 pointer-events-none">
         <span className="capitalize px-2 py-0.5 rounded bg-slate-800 text-slate-300">
-          {project.language}
+          {project.projectType === "react-vite" || project.projectType === "react" || project.language === "react"
+            ? "React"
+            : project.language === "cpp"
+            ? "C++"
+            : project.language === "c"
+            ? "C"
+            : project.language}
         </span>
         <div className="flex items-center justify-end gap-2 min-w-0">
           <span className="truncate">Updated {formatRelativeTime(project.updatedAt)}</span>

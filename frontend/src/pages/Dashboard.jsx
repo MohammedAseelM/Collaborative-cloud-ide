@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, FolderCode, FolderUp, Sparkles } from "lucide-react";
+import { Plus, FolderCode, FolderUp, Layers } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Navbar from "../components/Navbar";
 import ProjectCard from "../components/ProjectCard";
@@ -187,7 +187,7 @@ const Dashboard = () => {
                     onClick={() => setIsCreateReactOpen(true)}
                     className="flex items-center gap-2 rounded-md bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-xs font-semibold px-3.5 py-2 transition-all shadow-md shadow-indigo-500/10 shrink-0 cursor-pointer"
                   >
-                    <Sparkles size={14} />
+                    <Layers size={14} />
                     <span>+ Create React Project</span>
                   </button>
 
@@ -231,7 +231,7 @@ const Dashboard = () => {
                         onClick={() => setIsCreateReactOpen(true)}
                         className="flex items-center gap-2 rounded-md bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-sm font-medium px-4 py-2 transition-all cursor-pointer shadow-md shadow-indigo-500/20"
                       >
-                        <Sparkles size={16} />
+                        <Layers size={16} />
                         + Create React Project
                       </button>
                       <button

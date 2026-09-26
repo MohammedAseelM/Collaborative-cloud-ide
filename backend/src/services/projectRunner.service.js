@@ -295,7 +295,10 @@ export const installDependencies = async (projectId, io = null) => {
   const nodeModulesPath = path.join(projectDir, "node_modules");
 
   const project = await Project.findById(projectId);
-  const installCmd = project?.installCommand || "npm install";
+  let installCmd = project?.installCommand || "npm install";
+  if (installCmd.startsWith("npm install") && !installCmd.includes("--legacy-peer-deps")) {
+    installCmd = `${installCmd} --legacy-peer-deps --no-audit --no-fund`;
+  }
 
   if (!installCmd) {
     return true; // No install command required

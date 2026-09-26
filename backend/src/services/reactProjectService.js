@@ -214,7 +214,7 @@ export const createReactProject = async ({ userId, name, description = "", io = 
   const project = await Project.create({
     name: normalizedName,
     description: description || "Vite + React development workspace",
-    language: "javascript",
+    language: "react",
     owner: userId,
     members: [userId],
     memberRoles: { [userId.toString()]: "Owner" },

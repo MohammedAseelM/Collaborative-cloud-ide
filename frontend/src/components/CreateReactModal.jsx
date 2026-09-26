@@ -2,7 +2,7 @@
 // Responsibility: Modal dialog allowing users to create a new React + Vite project.
 
 import { useState } from "react";
-import { X, Sparkles, Loader2, Layers } from "lucide-react";
+import { X, Layers, Loader2 } from "lucide-react";
 import { createReactProjectRequest } from "../services/reactProject.service";
 import { useToast } from "../context/ToastContext";
 
@@ -48,7 +48,7 @@ export default function CreateReactModal({ isOpen, onClose, onCreateSuccess }) {
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 bg-slate-950/60">
           <div className="flex items-center gap-2">
             <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-              <Sparkles size={18} />
+              <Layers size={18} />
             </div>
             <h2 className="text-base font-semibold text-slate-100">Create React Project</h2>
           </div>
@@ -94,7 +94,7 @@ export default function CreateReactModal({ isOpen, onClose, onCreateSuccess }) {
                 disabled={isLoading}
                 className="w-full appearance-none px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all cursor-pointer"
               >
-                <option value="react-vite">React + Vite (JavaScript)</option>
+                <option value="react-vite">React + Vite</option>
               </select>
               <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-400">
                 <Layers size={14} />

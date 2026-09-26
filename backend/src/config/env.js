@@ -7,6 +7,12 @@ import dotenv from "dotenv";
 
 dotenv.config({ quiet: true });
 
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 export const env = {
   NODE_ENV: process.env.NODE_ENV || "development",
   PORT: process.env.PORT || 5000,
@@ -26,6 +32,6 @@ export const env = {
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   OPENAI_MODEL: process.env.OPENAI_MODEL || "gpt-5.6",
 
-  WORKSPACE_ROOT: process.env.WORKSPACE_ROOT || (process.platform === 'win32' ? 'C:\\workspace' : '/workspace'),
+  WORKSPACE_ROOT: process.env.WORKSPACE_ROOT || path.resolve(__dirname, "../../workspaces"),
 };
 

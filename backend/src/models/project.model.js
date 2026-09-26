@@ -65,6 +65,7 @@ const projectSchema = new mongoose.Schema(
         "cpp",
         "c",
         "typescript",
+        "react",
         "other",
       ],
       default: "javascript",

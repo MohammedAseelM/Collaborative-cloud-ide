@@ -72,7 +72,12 @@ const Playground = () => {
         addToast("Executed successfully!", "success");
       }
     } catch (err) {
-      const errMsg = err.response?.data?.message || "Execution request failed. Ensure backend service is active.";
+      const errMsg =
+        err.response?.data?.stderr ||
+        err.response?.data?.compileError ||
+        err.response?.data?.message ||
+        err.message ||
+        "Execution request failed. Ensure backend service is active.";
       setStderr(errMsg);
       addToast(errMsg, "error");
     } finally {

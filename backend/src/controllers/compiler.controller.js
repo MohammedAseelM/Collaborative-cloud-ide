@@ -34,15 +34,13 @@ export const runStandaloneCode = async (req, res, next) => {
       compileError,
     });
   } catch (error) {
-    if (error.message.includes("Time Limit Exceeded") || error.statusCode) {
-      res.status(error.statusCode || 200).json({
-        success: false,
-        stdout: "",
-        stderr: error.message,
-        compileError: "",
-      });
-    } else {
-      next(error);
-    }
+    const statusCode = error.statusCode || 200;
+    res.status(statusCode).json({
+      success: false,
+      message: error.message || "Execution error",
+      stdout: "",
+      stderr: error.message || "Execution error",
+      compileError: "",
+    });
   }
 };
