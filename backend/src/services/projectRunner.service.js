@@ -143,8 +143,8 @@ export const runProjectTerminalCommand = async (projectId, command) => {
 
   return new Promise((resolve, reject) => {
     const isWindows = process.platform === "win32";
-    const shellCommand = isWindows ? "cmd.exe" : "bash";
-    const shellArgs = isWindows ? ["/d", "/s", "/c", safeCommand] : ["-lc", safeCommand];
+    const shellCommand = isWindows ? "cmd.exe" : "sh";
+    const shellArgs = isWindows ? ["/d", "/s", "/c", safeCommand] : ["-c", safeCommand];
     const child = spawn(shellCommand, shellArgs, {
       cwd: projectDir,
       env: { ...process.env },
@@ -391,7 +391,7 @@ export const installDependencies = async (projectId, io = null) => {
 
   return new Promise((resolve) => {
     const isWin = process.platform === "win32";
-    const shellCmd = isWin ? "cmd.exe" : "bash";
+    const shellCmd = isWin ? "cmd.exe" : "sh";
     const args = isWin ? ["/c", installCmd] : ["-c", installCmd];
 
     const child = spawn(shellCmd, args, {
@@ -550,7 +550,7 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
     finalCmd = `${startCmd} -- -p ${allocatedPort}`;
   }
 
-  const shellCmd = isWin ? "cmd.exe" : "bash";
+  const shellCmd = isWin ? "cmd.exe" : "sh";
   const args = isWin ? ["/c", finalCmd] : ["-c", finalCmd];
 
   const child = spawn(shellCmd, args, {

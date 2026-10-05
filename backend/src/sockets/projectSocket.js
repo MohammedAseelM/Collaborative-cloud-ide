@@ -665,8 +665,8 @@ export const registerSocketHandlers = (io) => {
         stopProjectTerminal(socket);
         const projectDir = await syncProjectFilesToDisk(projectId);
         const isWindows = process.platform === "win32";
-        const shell = isWindows ? "cmd.exe" : "bash";
-        const shellArgs = isWindows ? ["/Q"] : ["--noprofile", "--norc", "-i"];
+        const shell = isWindows ? "cmd.exe" : "sh";
+        const shellArgs = isWindows ? ["/Q"] : ["-i"];
         const terminalProcess = spawn(shell, shellArgs, {
           cwd: projectDir,
           env: { ...process.env, FORCE_COLOR: "true" },
