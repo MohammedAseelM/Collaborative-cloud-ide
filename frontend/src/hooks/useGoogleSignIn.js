@@ -63,9 +63,10 @@ export function useGoogleSignIn({ buttonId, onCredential, onError }) {
 
     setConfigured(true);
 
-    if (window.location.origin === "http://127.0.0.1:5173") {
+    if (window.location.hostname === "127.0.0.1") {
+      const currentPort = window.location.port ? `:${window.location.port}` : "";
       window.location.replace(
-        `http://localhost:5173${window.location.pathname}${window.location.search}`
+        `http://localhost${currentPort}${window.location.pathname}${window.location.search}`
       );
       return undefined;
     }

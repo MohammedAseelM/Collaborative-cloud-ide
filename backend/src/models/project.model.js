@@ -70,6 +70,11 @@ const projectSchema = new mongoose.Schema(
       ],
       default: "javascript",
     },
+    template: {
+      type: String,
+      default: null,
+      maxlength: 100,
+    },
     code: {
       type: String,
       default: "",
@@ -97,6 +102,15 @@ const projectSchema = new mongoose.Schema(
     devServerPort: {
       type: Number,
       default: null,
+    },
+    containerId: {
+      type: String,
+      default: null,
+    },
+    previewUrl: {
+      type: String,
+      default: null,
+      maxlength: 500,
     },
     serverStatus: {
       type: String,

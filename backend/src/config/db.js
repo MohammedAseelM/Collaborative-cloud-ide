@@ -7,7 +7,7 @@ const connectDB = async () => {
 
   try {
     if (mongoUri) {
-      const conn = await mongoose.connect(mongoUri);
+      const conn = await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 2000 });
       console.log(`MongoDB Connected: ${conn.connection.host}`);
       return conn;
     }
@@ -18,7 +18,7 @@ const connectDB = async () => {
     }
 
     console.warn(
-      `Primary MongoDB connection failed: ${error.message}. Falling back to an in-memory database for local development.`
+      `Primary MongoDB connection failed (${error.message}). Falling back to automated in-memory MongoDB instance...`
     );
   }
 
@@ -26,11 +26,17 @@ const connectDB = async () => {
     throw new Error("MONGO_URI is not defined in production environment");
   }
 
-  console.warn(
-    "No MongoDB server is available. Starting with a non-persistent local fallback for development."
-  );
-
-  return null;
+  try {
+    const { MongoMemoryServer } = await import("mongodb-memory-server");
+    memoryServer = await MongoMemoryServer.create();
+    const memoryUri = memoryServer.getUri();
+    const conn = await mongoose.connect(memoryUri);
+    console.log(`Automated In-Memory MongoDB Connected: ${conn.connection.host}`);
+    return conn;
+  } catch (memError) {
+    console.error(`Failed to start automated in-memory MongoDB: ${memError.message}`);
+    return null;
+  }
 };
 
 export default connectDB;

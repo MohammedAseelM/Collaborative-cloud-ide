@@ -5,6 +5,7 @@
 
 import fs from "fs";
 import path from "path";
+import { spawnSync } from "child_process";
 import Project from "../models/project.model.js";
 import FileNode from "../models/file.model.js";
 import Activity from "../models/activity.model.js";
@@ -21,6 +22,7 @@ import {
   runProjectTerminalCommand,
   getDevServerStatus,
 } from "./projectRunner.service.js";
+import { destroyReactSandbox } from "./sandboxService.js";
 import { syncDiskToDatabase } from "./workspaceSync.service.js";
 import {
   acquireProjectEditLock,
@@ -28,6 +30,12 @@ import {
 } from "./projectEditLock.service.js";
 
 export const isValidProjectName = (name) => /^[a-z0-9][a-z0-9-]{0,62}$/.test(name);
+
+export const normalizeReactProjectName = (name) =>
+  (typeof name === "string" ? name : "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-");
 
 export const isValidPackageName = (name) => {
   if (!name || typeof name !== "string") return false;
@@ -195,7 +203,7 @@ code {
  * 1. Create a complete Vite + React project.
  */
 export const createReactProject = async ({ userId, name, description = "", io = null }) => {
-  const normalizedName = (name || "react-app").trim().toLowerCase();
+  const normalizedName = normalizeReactProjectName(name || "react-app");
 
   if (!isValidProjectName(normalizedName)) {
     const error = new Error(
@@ -220,6 +228,7 @@ export const createReactProject = async ({ userId, name, description = "", io = 
     name: normalizedName,
     description: description || "Vite + React development workspace",
     language: "react",
+    template: "react-vite",
     owner: userId,
     members: [userId],
     memberRoles: { [userId.toString()]: "Owner" },
@@ -229,6 +238,7 @@ export const createReactProject = async ({ userId, name, description = "", io = 
     serverStatus: "ready",
   });
 
+  try {
   // Create folders (src, public)
   const srcFolder = await FileNode.create({
     name: "src",
@@ -298,6 +308,16 @@ export const createReactProject = async ({ userId, name, description = "", io = 
 
   const allFiles = await FileNode.find({ project: project._id });
   return { project, files: allFiles };
+  } catch (error) {
+    await Promise.allSettled([
+      FileNode.deleteMany({ project: project._id }),
+      Activity.deleteMany({ project: project._id }),
+      Project.findByIdAndDelete(project._id),
+    ]);
+    const projectDir = path.resolve(env.WORKSPACE_ROOT, userId.toString(), project._id.toString());
+    try { fs.rmSync(projectDir, { recursive: true, force: true }); } catch {}
+    throw error;
+  }
 };
 
 /**
@@ -396,11 +416,11 @@ export const buildReactProject = async (projectId, io = null) => {
 
     return result;
   } catch (err) {
-    await Project.findByIdAndUpdate(projectId, { serverStatus: "error" });
+    await Project.findByIdAndUpdate(projectId, { serverStatus: "stopped" });
     if (io) {
       io.to(`project:${projectId}`).emit("project-status-change", {
         projectId,
-        status: "error",
+        status: "stopped",
       });
     }
     throw err;
@@ -421,6 +441,7 @@ export const deleteReactProject = async (projectId, userId, io = null) => {
   // 1. Stop active dev server if running
   try {
     await stopDevServer(projectId, io);
+    await destroyReactSandbox(projectId);
   } catch (err) {
     logger.warn(`Failed to stop dev server during deletion: ${err.message}`);
   }
@@ -750,16 +771,34 @@ export const runProjectScript = async (projectId, scriptName, io = null) => {
  * 15. Check Node.js version.
  */
 export const getNodeVersion = async (projectId) => {
-  const result = await runProjectTerminalCommand(projectId, "node --version");
-  const version = (result.output || "").trim();
-  return { version, raw: result };
+  const project = await Project.findById(projectId);
+  if (!project) {
+    const error = new Error("Project not found");
+    error.statusCode = 404;
+    throw error;
+  }
+  return { version: process.version };
 };
 
 /**
  * 16. Check npm version.
  */
 export const getNpmVersion = async (projectId) => {
-  const result = await runProjectTerminalCommand(projectId, "npm --version");
-  const version = (result.output || "").trim();
-  return { version, raw: result };
+  const project = await Project.findById(projectId);
+  if (!project) {
+    const error = new Error("Project not found");
+    error.statusCode = 404;
+    throw error;
+  }
+  const command = process.platform === "win32" ? "cmd.exe" : "npm";
+  const args = process.platform === "win32" ? ["/d", "/s", "/c", "npm --version"] : ["--version"];
+  const result = spawnSync(command, args, { encoding: "utf8", windowsHide: true, timeout: 5_000 });
+  if (result.error || result.status !== 0) {
+    const error = new Error("Could not read the backend npm version");
+    error.statusCode = 503;
+    error.errorCode = "NPM_VERSION_UNAVAILABLE";
+    throw error;
+  }
+  const version = (result.stdout || "").split(/\r?\n/).find((line) => /^\d+\.\d+\.\d+/.test(line.trim()))?.trim() || "unknown";
+  return { version };
 };

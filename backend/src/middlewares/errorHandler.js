@@ -10,9 +10,10 @@ const errorHandler = (err, req, res, next) => {
 
   res.status(statusCode).json({
     success: false,
-    message: err.message || "Internal Server Error",
-    // Stack trace is only exposed in development for debugging purposes
-    stack: process.env.NODE_ENV === "production" ? undefined : err.stack,
+    message: err.expose || statusCode < 500
+      ? err.message || "Request failed"
+      : "An unexpected server error occurred.",
+    errorCode: err.errorCode || (statusCode >= 500 ? "INTERNAL_SERVER_ERROR" : "REQUEST_FAILED"),
   });
 };
 

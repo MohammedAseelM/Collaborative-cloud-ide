@@ -191,11 +191,17 @@ export const executeCodeInSandbox = async (language, code, input) => {
 
   // 1. Verify Docker daemon status
   const dockerOk = await checkDockerRunning();
-  let useMockFallback = false;
   if (!dockerOk) {
-    useMockFallback = true;
-    logger.warn("Docker daemon is offline. Falling back to local execution / Wandbox runner.");
+    if (language === "html" || language === "css" || language === "text") {
+      return { stdout: code || "", stderr: "", compileError: "" };
+    }
+    const error = new Error("Code execution is unavailable because Docker is not running.");
+    error.statusCode = 503;
+    error.errorCode = "DOCKER_UNAVAILABLE";
+    error.expose = true;
+    throw error;
   }
+  const useMockFallback = false;
 
   // 2. Setup isolated temp directory for this run
   const runId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -217,7 +223,7 @@ export const executeCodeInSandbox = async (language, code, input) => {
     logger.info(`[Compiler Runner] Triggered compilation task.`);
     logger.info(`[Compiler Runner] Target language: ${language}`);
     logger.info(`[Compiler Runner] Output File: ${config.file}`);
-    logger.info(`[Compiler Runner] Environment: ${useMockFallback ? "Local Fallback" : "Standard Docker"}`);
+    logger.info("[Compiler Runner] Environment: Standard Docker");
 
     // CPU, Memory limits for docker containers
     const dockerLimits = "--rm -i -m 256m --cpus 0.5";
@@ -739,6 +745,8 @@ export const runCode = async (req, res, next) => {
     if (error.message.includes("Time Limit Exceeded") || error.statusCode) {
       res.status(error.statusCode || 200).json({
         success: false,
+        message: error.expose ? error.message : "Code execution failed.",
+        errorCode: error.errorCode || "CODE_EXECUTION_FAILED",
         stdout: "",
         stderr: error.message,
         compileError: "",

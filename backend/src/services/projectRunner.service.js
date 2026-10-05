@@ -13,6 +13,8 @@ import { env } from "../config/env.js";
 import { detectAndSaveProjectType } from "./projectDetector.service.js";
 import logger from "../utils/logger.js";
 import { releaseProjectEditLock } from "./projectEditLock.service.js";
+import { runReactSandboxCommand, startReactSandbox, stopReactSandbox } from "./sandboxService.js";
+import { resolveProjectPath } from "../utils/projectPath.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -127,6 +129,17 @@ const validateTerminalCommand = (command) => {
 export const runProjectTerminalCommand = async (projectId, command) => {
   const safeCommand = validateTerminalCommand(command);
   const projectDir = await syncProjectFilesToDisk(projectId);
+  const project = await Project.findById(projectId).select("projectType");
+
+  if (project?.projectType === "react-vite") {
+    const args = safeCommand.split(/\s+/);
+    try {
+      return await runReactSandboxCommand(projectId, args, { installIfMissing: true });
+    } catch (error) {
+      if (error.errorCode !== "DOCKER_UNAVAILABLE") throw error;
+      logger.info(`Docker unavailable for terminal command on project ${projectId}. Falling back to native execution.`);
+    }
+  }
 
   return new Promise((resolve, reject) => {
     const isWindows = process.platform === "win32";
@@ -134,7 +147,7 @@ export const runProjectTerminalCommand = async (projectId, command) => {
     const shellArgs = isWindows ? ["/d", "/s", "/c", safeCommand] : ["-lc", safeCommand];
     const child = spawn(shellCommand, shellArgs, {
       cwd: projectDir,
-      env: { ...process.env, FORCE_COLOR: "true" },
+      env: { ...process.env },
       windowsHide: true,
     });
 
@@ -198,6 +211,44 @@ export const findAvailablePort = (startPort = 5173) => {
 };
 
 /**
+ * Polls a TCP port until a server starts accepting socket connections.
+ * @param {number} port
+ * @param {number} timeoutMs
+ * @returns {Promise<boolean>}
+ */
+export const waitForPortOpen = (port, timeoutMs = 15000) => {
+  const startTime = Date.now();
+  return new Promise((resolve) => {
+    const check = () => {
+      const socket = new net.Socket();
+      socket.setTimeout(500);
+      socket.on("connect", () => {
+        socket.destroy();
+        resolve(true);
+      });
+      socket.on("error", () => {
+        socket.destroy();
+        if (Date.now() - startTime > timeoutMs) {
+          resolve(false);
+        } else {
+          setTimeout(check, 300);
+        }
+      });
+      socket.on("timeout", () => {
+        socket.destroy();
+        if (Date.now() - startTime > timeoutMs) {
+          resolve(false);
+        } else {
+          setTimeout(check, 300);
+        }
+      });
+      socket.connect(port, "127.0.0.1");
+    };
+    check();
+  });
+};
+
+/**
  * Writes all MongoDB project FileNode documents to the persistent physical directory on disk for execution.
  * @param {string} projectId 
  * @returns {Promise<string>} - Absolute path of created project directory
@@ -217,7 +268,7 @@ export const syncProjectFilesToDisk = async (projectId) => {
   // 1. Create folders first
   const folders = files.filter((f) => f.isFolder);
   for (const folder of folders) {
-    const folderPath = path.join(projectDir, folder.relativePath || folder.name);
+    const folderPath = resolveProjectPath(projectDir, folder.relativePath || folder.name);
     if (!fs.existsSync(folderPath)) {
       fs.mkdirSync(folderPath, { recursive: true });
     }
@@ -226,7 +277,7 @@ export const syncProjectFilesToDisk = async (projectId) => {
   // 2. Write file contents
   const codeFiles = files.filter((f) => !f.isFolder);
   for (const file of codeFiles) {
-    const filePath = path.join(projectDir, file.relativePath || file.name);
+    const filePath = resolveProjectPath(projectDir, file.relativePath || file.name);
     const parentDir = path.dirname(filePath);
     if (!fs.existsSync(parentDir)) {
       fs.mkdirSync(parentDir, { recursive: true });
@@ -265,10 +316,12 @@ const formatPreviewUrl = (port) => {
   return `${host}:${port}`;
 };
 
-const updateServerStatus = async (projectId, status, port = null, io = null) => {
+const updateServerStatus = async (projectId, status, port = null, io = null, containerId = null) => {
   await Project.findByIdAndUpdate(projectId, {
     serverStatus: status,
-    ...(port !== undefined && { devServerPort: port }),
+    devServerPort: port,
+    previewUrl: formatPreviewUrl(port),
+    containerId,
   });
 
   const serverRecord = activeServers.get(projectId);
@@ -302,6 +355,29 @@ export const installDependencies = async (projectId, io = null) => {
 
   if (!installCmd) {
     return true; // No install command required
+  }
+
+  if (project?.projectType === "react-vite") {
+    await updateServerStatus(projectId, "installing", null, io);
+    appendAndBroadcastLog(projectId, "⚙ Installing dependencies in the Docker sandbox...", io);
+    try {
+      const result = await runReactSandboxCommand(projectId, ["npm", "install", "--legacy-peer-deps", "--no-audit", "--no-fund"], {
+        timeoutMs: 300_000,
+      });
+      if (result.output) appendAndBroadcastLog(projectId, result.output, io);
+      const installed = result.exitCode === 0;
+      if (!installed) {
+        appendAndBroadcastLog(projectId, `❌ Dependency installation failed (exit code ${result.exitCode}).`, io);
+        await updateServerStatus(projectId, "error", null, io);
+      }
+      return installed;
+    } catch (error) {
+      if (error.errorCode !== "DOCKER_UNAVAILABLE") {
+        await updateServerStatus(projectId, "error", null, io);
+        throw error;
+      }
+      appendAndBroadcastLog(projectId, "⚠️ Docker Desktop is unavailable. Falling back to native dependency installation...", io);
+    }
   }
 
   // Skip if node_modules already exists
@@ -358,6 +434,14 @@ export const installDependencies = async (projectId, io = null) => {
 export const startDevServer = async (projectId, io = null, options = {}) => {
   const isPreview = options.mode === "preview";
   const targetStatus = isPreview ? "previewing" : "running";
+  const startingServer = activeServers.get(projectId);
+  if (startingServer?.status === "starting") {
+    return {
+      status: "starting",
+      port: startingServer.port,
+      previewUrl: formatPreviewUrl(startingServer.port),
+    };
+  }
 
   // If server is already running with matching status, return current state
   if (activeServers.has(projectId) && activeServers.get(projectId).status === targetStatus) {
@@ -378,6 +462,49 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
 
   // Allocate open port
   const allocatedPort = await findAvailablePort(preferredPort);
+
+  if (project?.projectType === "react-vite") {
+    await syncProjectFilesToDisk(projectId);
+    activeServers.set(projectId, {
+      process: null,
+      port: allocatedPort,
+      status: "starting",
+      logs: [],
+      projectDir: null,
+      sandbox: true,
+    });
+    await updateServerStatus(projectId, "starting", allocatedPort, io);
+    appendAndBroadcastLog(projectId, `🚀 Starting React ${isPreview ? "preview" : "development"} server in Docker on port ${allocatedPort}...`, io);
+    try {
+      const sandbox = await startReactSandbox(projectId, allocatedPort, isPreview ? "preview" : "dev", {
+        onLog: (line) => appendAndBroadcastLog(projectId, line, io),
+        onExit: () => {
+          updateServerStatus(projectId, "stopped", null, io);
+          activeServers.delete(projectId);
+          releaseProjectEditLock(projectId, null, io);
+        },
+      });
+      const serverRecord = activeServers.get(projectId);
+      if (serverRecord) {
+        serverRecord.container = sandbox.container;
+        serverRecord.status = "running";
+      }
+      await updateServerStatus(projectId, targetStatus, allocatedPort, io, sandbox.containerId);
+      return {
+        status: targetStatus,
+        port: allocatedPort,
+        previewUrl: formatPreviewUrl(allocatedPort),
+      };
+    } catch (error) {
+      activeServers.delete(projectId);
+      if (error.errorCode === "DOCKER_UNAVAILABLE") {
+        appendAndBroadcastLog(projectId, "⚠️ Docker Desktop is unavailable. Falling back to native process mode...", io);
+      } else {
+        await updateServerStatus(projectId, "error", null, io);
+        throw error;
+      }
+    }
+  }
 
   // Initialize server record
   const projectDir = await syncProjectFilesToDisk(projectId);
@@ -472,12 +599,14 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
     releaseProjectEditLock(projectId, null, io);
   });
 
-  // Mark as running after 2.5 seconds if active
-  setTimeout(() => {
-    if (activeServers.has(projectId) && activeServers.get(projectId).status === "starting") {
-      updateServerStatus(projectId, targetStatus, allocatedPort, io);
-    }
-  }, 2500);
+  // Poll until TCP port is open and listening before marking status as running
+  const isPortReady = await waitForPortOpen(allocatedPort, 15000);
+  if (isPortReady) {
+    await updateServerStatus(projectId, targetStatus, allocatedPort, io);
+  } else {
+    logger.warn(`Dev server process for ${projectId} on port ${allocatedPort} started, but TCP port check timed out.`);
+    await updateServerStatus(projectId, targetStatus, allocatedPort, io);
+  }
 
   return {
     status: targetStatus,
@@ -491,12 +620,22 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
  */
 export const stopDevServer = async (projectId, io = null) => {
   const serverRecord = activeServers.get(projectId);
+  const project = await Project.findById(projectId).select("projectType");
+
+  if (serverRecord?.sandbox || project?.projectType === "react-vite") {
+    appendAndBroadcastLog(projectId, "🛑 Stopping development container/sandbox...", io);
+    try {
+      await stopReactSandbox(projectId);
+    } catch (err) {
+      logger.warn(`Ignored error while stopping sandbox: ${err.message}`);
+    }
+  }
 
   if (serverRecord && serverRecord.process) {
-    appendAndBroadcastLog(projectId, "🛑 Stopping development server...", io);
+    appendAndBroadcastLog(projectId, "🛑 Stopping development server process...", io);
     try {
       if (process.platform === "win32") {
-        spawn("taskkill", ["/pid", serverRecord.process.pid, "/f", "/t"]);
+        spawn("taskkill", ["/pid", String(serverRecord.process.pid), "/f", "/t"], { windowsHide: true });
       } else {
         serverRecord.process.kill("SIGTERM");
       }

@@ -26,6 +26,7 @@ export const env = {
   REDIS_URL: process.env.REDIS_URL,
   GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
   PUBLIC_HOST: process.env.PUBLIC_HOST || null,
+  PROJECT_SANDBOX_IMAGE: process.env.PROJECT_SANDBOX_IMAGE || "node:22-alpine",
 
   // AI assistant settings. Keep the API key on the server; never expose it
   // through Vite environment variables or browser code.
@@ -34,4 +35,3 @@ export const env = {
 
   WORKSPACE_ROOT: process.env.WORKSPACE_ROOT || path.resolve(__dirname, "../../workspaces"),
 };
-

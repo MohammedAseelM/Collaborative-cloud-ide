@@ -33,11 +33,6 @@ const AdminDashboard = () => {
   const { user } = useAuth();
   const { addToast } = useToast();
 
-  // Authentication check - admin only
-  if (!user || user.role !== "admin") {
-    return <Navigate to="/dashboard" replace />;
-  }
-
   const [activeTab, setActiveTab] = useState("stats"); // "stats" | "users" | "projects" | "logs"
 
   // Aggregate stats states
@@ -125,6 +120,11 @@ const AdminDashboard = () => {
     if (activeTab === "projects") loadProjects();
     if (activeTab === "logs") loadLogs();
   }, [activeTab, userPage, projectPage]);
+
+  // Authentication check - admin only (evaluated after hooks)
+  if (!user || user.role !== "admin") {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   // Handle Search submissions
   const handleUserSearchSubmit = (e) => {

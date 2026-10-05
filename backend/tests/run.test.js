@@ -51,9 +51,7 @@ beforeEach(async () => {
 });
 
 test("Code Compilation & Sandbox Execution Tests", async (t) => {
-  await t.test("should execute Javascript code successfully using development mode fallback", async () => {
-    // Force Node environment to development to invoke local fallback during tests
-    process.env.NODE_ENV = "development";
+  await t.test("executes in Docker or clearly reports that the sandbox is unavailable", async () => {
 
     const res = await fetch(`${baseUrl}/projects/${project._id}/run`, {
       method: "POST",
@@ -67,9 +65,14 @@ test("Code Compilation & Sandbox Execution Tests", async (t) => {
       }),
     });
 
-    assert.strictEqual(res.status, 200);
     const data = await res.json();
-    assert.strictEqual(data.success, true);
-    assert.ok(data.stdout.includes("Test output value"));
+    if (res.status === 200) {
+      assert.strictEqual(data.success, true);
+      assert.ok(data.stdout.includes("Test output value"));
+    } else {
+      assert.strictEqual(res.status, 503);
+      assert.strictEqual(data.errorCode, "DOCKER_UNAVAILABLE");
+      assert.strictEqual(data.stdout, "");
+    }
   });
 });

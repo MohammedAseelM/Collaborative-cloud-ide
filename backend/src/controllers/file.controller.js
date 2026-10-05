@@ -16,6 +16,7 @@ import { assertProjectEditable } from "../services/projectEditLock.service.js";
 import { syncDiskToDatabase } from "../services/workspaceSync.service.js";
 import { env } from "../config/env.js";
 import logger from "../utils/logger.js";
+import { resolveProjectPath } from "../utils/projectPath.js";
 
 // Starter templates based on file extension
 const codeTemplates = {
@@ -50,7 +51,7 @@ export const resolveNodeRelativePath = async (name, parentId, projectId) => {
 export const writeNodeToDisk = async (projectOwnerId, projectId, relativePath, isFolder, content = "") => {
   try {
     const projectDir = path.resolve(env.WORKSPACE_ROOT, projectOwnerId.toString(), projectId.toString());
-    const targetPath = path.join(projectDir, relativePath);
+    const targetPath = resolveProjectPath(projectDir, relativePath);
     if (isFolder) {
       if (!fs.existsSync(targetPath)) {
         fs.mkdirSync(targetPath, { recursive: true });
@@ -64,13 +65,14 @@ export const writeNodeToDisk = async (projectOwnerId, projectId, relativePath, i
     }
   } catch (err) {
     logger.error(`Failed to write node to disk at ${relativePath}:`, err);
+    if (err.statusCode === 400) throw err;
   }
 };
 
 export const deleteNodeFromDisk = async (projectOwnerId, projectId, relativePath) => {
   try {
     const projectDir = path.resolve(env.WORKSPACE_ROOT, projectOwnerId.toString(), projectId.toString());
-    const targetPath = path.join(projectDir, relativePath);
+    const targetPath = resolveProjectPath(projectDir, relativePath);
     if (fs.existsSync(targetPath)) {
       fs.rmSync(targetPath, { recursive: true, force: true });
     }
@@ -149,6 +151,7 @@ export const createFileNode = async (req, res, next) => {
     }
 
     const relativePath = await resolveNodeRelativePath(name, parentId, projectId);
+    resolveProjectPath(path.resolve(env.WORKSPACE_ROOT, project.owner.toString(), projectId.toString()), relativePath);
 
     const node = await FileNode.create({
       name,
@@ -240,8 +243,8 @@ export const renameFileNode = async (req, res, next) => {
     // Rename on disk first
     try {
       const projectDir = path.resolve(env.WORKSPACE_ROOT, project.owner.toString(), node.project.toString());
-      const oldDiskPath = path.join(projectDir, oldRelPath);
-      const newDiskPath = path.join(projectDir, newRelPath);
+      const oldDiskPath = resolveProjectPath(projectDir, oldRelPath);
+      const newDiskPath = resolveProjectPath(projectDir, newRelPath);
       if (fs.existsSync(oldDiskPath)) {
         fs.renameSync(oldDiskPath, newDiskPath);
       }
@@ -429,6 +432,7 @@ export const uploadFile = async (req, res, next) => {
     }
 
     const relativePath = await resolveNodeRelativePath(fileName, parentId, projectId);
+    resolveProjectPath(path.resolve(env.WORKSPACE_ROOT, project.owner.toString(), projectId.toString()), relativePath);
 
     const node = await FileNode.create({
       name: fileName,
@@ -542,6 +546,7 @@ export const uploadFolder = async (req, res, next) => {
         const pathParts = relativePath.split('/');
         const fileName = pathParts.pop();
         const folderPath = pathParts.join('/');
+        resolveProjectPath(path.resolve(env.WORKSPACE_ROOT, project.owner.toString(), projectId.toString()), relativePath);
 
         // Create folder structure if needed
         let finalParentId = parentId || null;

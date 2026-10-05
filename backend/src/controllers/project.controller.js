@@ -93,6 +93,7 @@ export const createProject = async (req, res, next) => {
         success: true,
         message: "React project created successfully",
         project: result.project,
+        files: result.files,
       });
     }
 

@@ -4,6 +4,7 @@ import FileNode from "../models/file.model.js";
 import Project from "../models/project.model.js";
 import { env } from "../config/env.js";
 import logger from "../utils/logger.js";
+import { resolveProjectPath } from "../utils/projectPath.js";
 
 const IGNORED_DIRS = new Set(["node_modules", ".git", "dist", "build", ".next"]);
 
@@ -109,7 +110,7 @@ export const syncDiskToDatabase = async (projectId) => {
   if (diskPaths.size === 0 && existingNodes.length > 0) {
     for (const [relPath, node] of dbPaths.entries()) {
       try {
-        const fullDiskPath = path.join(projectDir, relPath);
+        const fullDiskPath = resolveProjectPath(projectDir, relPath);
         if (node.isFolder) {
           if (!fs.existsSync(fullDiskPath)) fs.mkdirSync(fullDiskPath, { recursive: true });
         } else {

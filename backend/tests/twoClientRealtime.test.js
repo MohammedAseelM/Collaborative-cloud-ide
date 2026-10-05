@@ -5,6 +5,8 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "http";
+import fs from "node:fs";
+import path from "node:path";
 import mongoose from "mongoose";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import { Server } from "socket.io";
@@ -150,6 +152,24 @@ test("Two-Client Real-Time Collaboration Full Flow", async (t) => {
     const received = await codeChangePromise;
     assert.equal(received.fileId, testFile._id.toString());
     assert.equal(received.text, "User B");
+  });
+
+  await t.test("Step 3a: Monaco edits persist to MongoDB, workspace disk, and file reload", async () => {
+    await new Promise((resolve) => setTimeout(resolve, 2_500));
+
+    const expected = "<h1>Hello User B</h1>";
+    const savedFile = await FileNode.findById(testFile._id);
+    assert.equal(savedFile.content, expected);
+
+    const diskPath = path.join(env.WORKSPACE_ROOT, userA._id.toString(), project._id.toString(), "index.html");
+    assert.equal(fs.readFileSync(diskPath, "utf8"), expected);
+
+    const reloadResponse = await fetch(`${socketServerUrl}/api/files/${testFile._id}`, {
+      headers: { Cookie: `token=${tokenA}` },
+    });
+    assert.equal(reloadResponse.status, 200);
+    const reloadData = await reloadResponse.json();
+    assert.equal(reloadData.content, expected);
   });
 
   await t.test("Step 4: Remote Monaco Cursor (Client A moves cursor -> Client B receives)", async () => {

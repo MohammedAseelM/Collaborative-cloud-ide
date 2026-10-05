@@ -81,6 +81,27 @@ test("React Project Command System Tests", async (t) => {
     assert.ok(fileNames.includes("public"));
   });
 
+  await t.test("POST /api/projects should return scaffolded React files when language is react", async () => {
+    const res = await fetch(`${baseUrl}/projects`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: ownerCookie,
+      },
+      body: JSON.stringify({ name: "My React App", description: "from generic flow", language: "react" }),
+    });
+
+    assert.strictEqual(res.status, 201);
+    const data = await res.json();
+    assert.strictEqual(data.success, true);
+    assert.strictEqual(data.project.name, "my-react-app");
+    assert.ok(Array.isArray(data.files));
+    assert.ok(data.files.some((file) => file.name === "package.json"));
+    assert.ok(data.files.some((file) => file.name === "App.jsx"));
+    const packageFile = data.files.find((file) => file.name === "package.json");
+    assert.strictEqual(JSON.parse(packageFile.content).name, "my-react-app");
+  });
+
   await t.test("should reject duplicate project name for the same owner", async () => {
     await fetch(`${baseUrl}/projects/react/create`, {
       method: "POST",
@@ -244,4 +265,3 @@ test("React Project Command System Tests", async (t) => {
     assert.match(npmData.version, /^\d+/);
   });
 });
-

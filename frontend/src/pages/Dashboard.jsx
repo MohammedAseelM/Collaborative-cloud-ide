@@ -13,6 +13,7 @@ import { useToast } from "../context/ToastContext";
 import { useAuth } from "../context/AuthContext";
 import { DashboardSkeleton } from "../components/Skeletons";
 import InvitationsInbox from "../components/InvitationsInbox";
+import { createReactProjectRequest } from "../services/reactProject.service";
 
 const Dashboard = () => {
   const { user } = useAuth();
@@ -51,9 +52,24 @@ const Dashboard = () => {
 
   const handleCreateSubmit = async (values) => {
     try {
-      await createProject(values);
+      let createdProject;
+      if (values.language === "react") {
+        const result = await createReactProjectRequest(values.name, values.description);
+        createdProject = result.project;
+        addToast(`React project "${values.name}" created successfully!`, "success");
+        setModalState(null);
+        if (createdProject?._id) {
+          navigate(`/project/${createdProject._id}`);
+        }
+        return;
+      }
+
+      createdProject = await createProject(values);
       addToast("Project created successfully!", "success");
       setModalState(null);
+      if (createdProject?._id) {
+        navigate(`/project/${createdProject._id}`);
+      }
     } catch (err) {
       addToast(
         err.response?.data?.message || "Failed to create project. Try again.",
