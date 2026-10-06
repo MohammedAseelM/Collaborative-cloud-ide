@@ -103,7 +103,7 @@ export default function LivePreviewPanel({
           {serverStatus === "running" && (
             <span className="flex items-center space-x-1.5 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-full">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span>Port :{port || 5173}</span>
+              <span>Port :{port || "Auto"}</span>
             </span>
           )}
         </div>
