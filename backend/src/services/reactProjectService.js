@@ -394,6 +394,7 @@ export const buildReactProject = async (projectId, io = null) => {
   }
 
   try {
+    await installDependencies(projectId, io);
     const result = await runProjectTerminalCommand(projectId, "npm run build");
     const status = result.exitCode === 0 ? "ready" : "error";
     await Project.findByIdAndUpdate(projectId, { serverStatus: status });

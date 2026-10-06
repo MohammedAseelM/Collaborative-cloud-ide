@@ -147,7 +147,10 @@ export const runProjectTerminalCommand = async (projectId, command) => {
     const shellArgs = isWindows ? ["/d", "/s", "/c", safeCommand] : ["-c", safeCommand];
     const child = spawn(shellCommand, shellArgs, {
       cwd: projectDir,
-      env: { ...process.env },
+      env: {
+        ...process.env,
+        PATH: `${path.join(projectDir, "node_modules", ".bin")}${path.delimiter}${process.env.PATH || ""}`,
+      },
       windowsHide: true,
     });
 
@@ -396,7 +399,11 @@ export const installDependencies = async (projectId, io = null) => {
 
     const child = spawn(shellCmd, args, {
       cwd: projectDir,
-      env: { ...process.env, FORCE_COLOR: "true" },
+      env: {
+        ...process.env,
+        FORCE_COLOR: "true",
+        PATH: `${path.join(projectDir, "node_modules", ".bin")}${path.delimiter}${process.env.PATH || ""}`,
+      },
     });
 
     child.stdout.on("data", (data) => {
@@ -555,7 +562,10 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
 
   const child = spawn(shellCmd, args, {
     cwd: projectDir,
-    env: envVars,
+    env: {
+      ...envVars,
+      PATH: `${path.join(projectDir, "node_modules", ".bin")}${path.delimiter}${process.env.PATH || ""}`,
+    },
   });
 
   const serverRecord = activeServers.get(projectId);
