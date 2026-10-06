@@ -14,8 +14,9 @@ export const getHealthStatus = async (req, res, next) => {
     const dbStates = ["disconnected", "connected", "connecting", "disconnecting"];
 
     res.status(200).json({
+      status: "ok",
       success: true,
-      message: "Server is up and running",
+      message: "Collaborative Cloud IDE backend is running",
       uptimeSeconds: process.uptime().toFixed(2),
       timestamp: new Date().toISOString(),
       database: dbStates[mongoose.connection.readyState] || "unknown",

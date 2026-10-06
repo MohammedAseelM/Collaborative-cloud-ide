@@ -52,9 +52,9 @@ export const getReactTemplateFiles = (projectName) => ({
       version: "0.0.0",
       type: "module",
       scripts: {
-        dev: "vite",
+        dev: "vite --host 0.0.0.0",
         build: "vite build",
-        preview: "vite preview",
+        preview: "vite preview --host 0.0.0.0",
       },
       dependencies: {
         react: "^19.0.0",
