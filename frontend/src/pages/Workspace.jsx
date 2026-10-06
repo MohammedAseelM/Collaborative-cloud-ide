@@ -1050,6 +1050,10 @@ const Workspace = () => {
 </body>
 </html>`;
         setPreviewHtml(previewDoc);
+        setIsPreviewOpen(true);
+        if (project?.projectType === "react-vite" || project?.projectType === "react" || project?.template === "react-vite") {
+          handleStartDevServer();
+        }
         addToast("React preview generated!", "success");
         setIsRunning(false);
         loadActivities();
@@ -1837,6 +1841,7 @@ const Workspace = () => {
             {isPreviewOpen && (
               <div className="w-1/2 h-full min-w-[320px] transition-all border-l border-slate-900">
                 <LivePreviewPanel
+                  projectId={projectId}
                   previewUrl={previewUrl}
                   previewHtml={previewHtml}
                   serverStatus={serverStatus}
