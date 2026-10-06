@@ -136,8 +136,7 @@ export const runProjectTerminalCommand = async (projectId, command) => {
     try {
       return await runReactSandboxCommand(projectId, args, { installIfMissing: true });
     } catch (error) {
-      if (error.errorCode !== "DOCKER_UNAVAILABLE") throw error;
-      logger.info(`Docker unavailable for terminal command on project ${projectId}. Falling back to native execution.`);
+      logger.info(`Docker unavailable for terminal command on project ${projectId} (${error.message}). Falling back to native execution.`);
     }
   }
 
@@ -504,12 +503,8 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
       };
     } catch (error) {
       activeServers.delete(projectId);
-      if (error.errorCode === "DOCKER_UNAVAILABLE") {
-        appendAndBroadcastLog(projectId, "⚠️ Docker Desktop is unavailable. Falling back to native process mode...", io);
-      } else {
-        await updateServerStatus(projectId, "error", null, io);
-        throw error;
-      }
+      logger.info(`Docker sandbox start failed for project ${projectId} (${error.message}). Falling back to native process mode.`);
+      appendAndBroadcastLog(projectId, "⚠️ Docker sandbox unavailable. Falling back to native process mode...", io);
     }
   }
 

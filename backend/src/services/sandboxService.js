@@ -65,9 +65,9 @@ async function ensureProjectVolume(projectId) {
 }
 
 function ensureDockerError(error) {
-  if (error.statusCode) return error;
+  if (error?.errorCode === "DOCKER_UNAVAILABLE") return error;
   const wrapped = sandboxError(
-    "Docker could not start the project sandbox. Start Docker Desktop and make sure the configured Node image is available.",
+    error?.message || "Docker could not start the project sandbox.",
     503,
     "DOCKER_UNAVAILABLE"
   );
