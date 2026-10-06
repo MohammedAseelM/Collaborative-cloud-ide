@@ -11,7 +11,7 @@ export const startSandbox = async (projectId, userId) => {
   
   try {
     const container = await docker.createContainer({
-      Image: "node:18",
+      Image: env.PROJECT_SANDBOX_IMAGE || "node:22-alpine",
       Cmd: ["tail", "-f", "/dev/null"],
       name: containerName,
       HostConfig: {

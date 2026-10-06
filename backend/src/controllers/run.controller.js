@@ -538,13 +538,13 @@ if (Component && typeof Component === 'function') {
         stdout = result.stdout;
         stderr = result.stderr;
       } else if (language === "javascript") {
-        const cmd = `docker run ${dockerLimits} -v "${runDir}:/app:ro" node:20-alpine node /app/code.js < "${inputFile}"`;
+        const cmd = `docker run ${dockerLimits} -v "${runDir}:/app:ro" node:22-alpine node /app/code.js < "${inputFile}"`;
         logger.info(`[Compiler Runner] Docker run command: ${cmd}`);
         const result = await execPromise(cmd);
         stdout = result.stdout;
         stderr = result.stderr;
       } else if (language === "typescript") {
-        const compileCmd = `docker run --rm -v "${runDir}:/app" node:20-alpine npx -y typescript tsc --target es2020 /app/code.ts`;
+        const compileCmd = `docker run --rm -v "${runDir}:/app" node:22-alpine npx -y typescript tsc --target es2020 /app/code.ts`;
         logger.info(`[Compiler Runner] Docker compile command: ${compileCmd}`);
         try {
           await execPromise(compileCmd, {}, 10000); // 10s compile limit
@@ -553,7 +553,7 @@ if (Component && typeof Component === 'function') {
         }
 
         if (!compileError) {
-          const cmd = `docker run ${dockerLimits} -v "${runDir}:/app:ro" node:20-alpine node /app/code.js < "${inputFile}"`;
+          const cmd = `docker run ${dockerLimits} -v "${runDir}:/app:ro" node:22-alpine node /app/code.js < "${inputFile}"`;
           logger.info(`[Compiler Runner] Docker run command: ${cmd}`);
           const result = await execPromise(cmd);
           stdout = result.stdout;
@@ -660,12 +660,12 @@ if (Component && typeof Component === 'function') {
         fs.writeFileSync(path.join(srcDir, "App.jsx"), code);
         
         // Install dependencies and build in Docker
-        const installCmd = `docker run --rm -v "${reactDir}:/app" -w /app node:20-alpine npm install --silent --no-audit --no-fund`;
+        const installCmd = `docker run --rm -v "${reactDir}:/app" -w /app node:22-alpine npm install --silent --no-audit --no-fund`;
         logger.info(`[Compiler Runner] React Docker install command: ${installCmd}`);
         try {
           await execPromise(installCmd, {}, 60000);
           
-          const buildCmd = `docker run --rm -v "${reactDir}:/app" -w /app node:20-alpine npm run build`;
+          const buildCmd = `docker run --rm -v "${reactDir}:/app" -w /app node:22-alpine npm run build`;
           logger.info(`[Compiler Runner] React Docker build command: ${buildCmd}`);
           const buildRes = await execPromise(buildCmd, {}, 60000);
           
