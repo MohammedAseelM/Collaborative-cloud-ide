@@ -3,13 +3,16 @@
 // to the isolated dev server running on localhost:<dynamic_port>.
 
 import { createProxyMiddleware } from "http-proxy-middleware";
+import jwt from "jsonwebtoken";
+import { env } from "../config/env.js";
+import Project from "../models/project.model.js";
 import { getProjectPort } from "../services/portManager.js";
 import { getActiveProjectPort } from "../services/projectRunner.service.js";
 import logger from "../utils/logger.js";
 
 const proxyInstances = new Map();
 
-export const previewProxyHandler = (req, res, next) => {
+export const previewProxyHandler = async (req, res, next) => {
   let projectId = req.params.projectId || req.params.id;
 
   // If not in params, extract from referer header (for assets like /@vite/client or /src/main.jsx)
@@ -20,10 +23,33 @@ export const previewProxyHandler = (req, res, next) => {
     }
   }
 
+  // Validate projectId format to prevent directory traversal or malformed strings
+  if (projectId && !/^[a-fA-F0-9]{24}$/.test(projectId) && !/^[a-zA-Z0-9_-]{1,64}$/.test(projectId)) {
+    return res.status(400).send("Invalid project ID.");
+  }
+
   // Ensure trailing slash on root preview URL so relative paths in iframe resolve correctly
   if (projectId && req.originalUrl && req.originalUrl.split("?")[0] === `/preview/${projectId}`) {
     const query = req.originalUrl.includes("?") ? req.originalUrl.slice(req.originalUrl.indexOf("?")) : "";
     return res.redirect(301, `/preview/${projectId}/${query}`);
+  }
+
+  // Verify project membership if authentication token is present
+  const token = req.cookies?.token || req.headers?.authorization?.replace(/^Bearer\s+/i, "");
+  if (token && projectId && /^[a-fA-F0-9]{24}$/.test(projectId)) {
+    try {
+      const decoded = jwt.verify(token, env.JWT_SECRET);
+      const project = await Project.findById(projectId).select("members owner");
+      if (project) {
+        const isMember = project.members.some((m) => m.toString() === decoded.userId.toString()) ||
+          project.owner.toString() === decoded.userId.toString();
+        if (!isMember) {
+          return res.status(403).send("Forbidden: You do not have permission to view this project preview.");
+        }
+      }
+    } catch {
+      // Allow request to proceed if token verification failed on subresource fetch
+    }
   }
 
   const port = getActiveProjectPort(projectId) || getProjectPort(projectId);

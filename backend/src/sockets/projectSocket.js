@@ -227,8 +227,23 @@ export const registerSocketHandlers = (io) => {
           return;
         }
 
-        if (!socket.projectId) {
-          socket.projectId = incomingProjectId || file.project.toString();
+        const fileProject = await Project.findById(file.project);
+        if (!fileProject) {
+          socket.emit("error", { message: "Project not found for this file" });
+          return;
+        }
+
+        const isMember = fileProject.members.some((m) => m.toString() === socket.user._id.toString());
+        if (!isMember) {
+          socket.emit("error", { message: "Not authorized to access this file" });
+          return;
+        }
+
+        if (!socket.projectId || socket.projectId !== file.project.toString()) {
+          socket.projectId = file.project.toString();
+          socket.projectRole = fileProject.owner.toString() === socket.user._id.toString()
+            ? "Owner"
+            : fileProject.memberRoles?.get(socket.user._id.toString()) || "Editor";
           socket.join(`project:${socket.projectId}`);
         }
 

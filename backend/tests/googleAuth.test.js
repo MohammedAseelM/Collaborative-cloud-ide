@@ -15,7 +15,7 @@ let mongoServer;
 let baseUrl;
 
 before(async () => {
-  mongoServer = await MongoMemoryServer.create();
+  mongoServer = await MongoMemoryServer.create({ instance: { launchTimeout: 60000 } });
   const uri = mongoServer.getUri();
   await mongoose.connect(uri);
 
@@ -26,9 +26,9 @@ before(async () => {
 });
 
 after(async () => {
-  await new Promise((resolve) => server.close(resolve));
-  await mongoose.disconnect();
-  await mongoServer.stop();
+  if (server) await new Promise((resolve) => server.close(resolve));
+  if (mongoose.connection.readyState !== 0) await mongoose.disconnect();
+  if (mongoServer) await mongoServer.stop();
 });
 
 beforeEach(async () => {

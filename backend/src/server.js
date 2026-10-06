@@ -3,6 +3,7 @@
 // initializes Socket.io, and starts the HTTP server.
 
 import http from "http";
+import mongoose from "mongoose";
 import { Server } from "socket.io";
 import app from "./app.js";
 import connectDB from "./config/db.js";
@@ -52,6 +53,30 @@ const startServer = async () => {
 };
 
 startServer();
+
+const gracefulShutdown = async (signal) => {
+  logger.info(`[SERVER] Received ${signal}. Initiating graceful shutdown...`);
+  server.close(async () => {
+    logger.info("[SERVER] HTTP server closed.");
+    try {
+      if (mongoose.connection.readyState !== 0) {
+        await mongoose.connection.close();
+        logger.info("[DATABASE] MongoDB connection closed.");
+      }
+    } catch (err) {
+      logger.error(`[DATABASE] Error closing database connection: ${err.message}`);
+    }
+    process.exit(0);
+  });
+
+  setTimeout(() => {
+    logger.error("[SERVER] Graceful shutdown timeout exceeded. Terminating process.");
+    process.exit(1);
+  }, 10000);
+};
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
 process.on("unhandledRejection", (err) => {
   logger.error(`Unhandled Rejection: ${err.message}`);

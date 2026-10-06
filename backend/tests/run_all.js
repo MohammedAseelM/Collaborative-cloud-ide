@@ -16,7 +16,7 @@ const testFiles = files
 
 console.log(`[Test Runner] Found ${testFiles.length} test suites. Launching process-isolated node --test runner...`);
 
-const result = spawnSync("node", ["--test", ...testFiles], {
+const result = spawnSync("node", ["--test", "--test-concurrency=2", ...testFiles], {
   stdio: "inherit",
   cwd: path.resolve(__dirname, ".."),
   shell: true,

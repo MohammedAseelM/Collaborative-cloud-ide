@@ -1,114 +1,119 @@
-# Production deployment on a Linux VPS
+# Collaborative Cloud IDE - Deployment Guide
 
-This deployment uses one Linux VPS with Docker Engine, Docker Compose, Nginx,
-and Certbot. The frontend container serves the built React application and
-proxies `/api` and `/socket.io` to the backend. MongoDB and the backend are
-not published to the internet.
+This guide covers deployment across multiple environments: Render (Control Plane), Vercel (Frontend), and Linux VPS with Docker Compose (Full Sandbox Execution Plane).
 
-## Readiness assessment
+---
 
-The repository is suitable for a Docker-based VPS deployment:
+## 1. Architectural Readiness & Hosting Matrix
 
-- `frontend/Dockerfile` builds and serves the Vite bundle with Nginx.
-- `backend/Dockerfile` runs the Express and Socket.IO server and includes the
-  Docker CLI.
-- `docker-compose.yml` persists MongoDB data, project workspaces, and runtime
-  scratch space.
-- `/api/health` is available for container health checks.
-- Socket.IO and the React project lifecycle routes are already wired.
+| Deployment Tier | Frontend Hosting | Backend API Hosting | Runtime Execution Method |
+| :--- | :--- | :--- | :--- |
+| **Tier 1: Render + Vercel** | Vercel (Static Vite build) | Render Web Service (Node.js) | Native Process Runner (`child_process` sandbox fallback) |
+| **Tier 2: Dedicated VPS** | Nginx Reverse Proxy | Docker Container | Hardened Docker Sandbox (`/var/run/docker.sock` daemon) |
 
-This application must run on a VPS or VM with Docker Engine because code
-execution and terminals require `/var/run/docker.sock`. Render-style managed
-Node services do not provide that Docker daemon access.
+> **IMPORTANT PLATFORM LIMITATION**:
+> Render Web Services run within isolated container environments that **do not expose the host Docker daemon socket** (`/var/run/docker.sock`).
+> On Render, the Collaborative Cloud IDE automatically uses its **Native Process Runner fallback** (`projectRunner.service.js` and `reactProjectService.js`) to install, build, and run applications.
+> If your organization requires hard Docker container boundaries for multi-tenant untrusted code compilation, deploy the backend to a **Linux VPS with Docker Compose** as described in Section 4.
 
-## 1. Prepare DNS and the VPS
+---
 
-1. Create an Ubuntu 22.04+ VPS with at least 2 vCPUs, 4 GB RAM, and enough
-   disk for user workspaces and Docker images.
-2. Point `mycloudide.com` and `www.mycloudide.com` DNS A records to the VPS
-   public IP.
-3. Allow TCP ports 22, 80, and 443 in the VPS/cloud firewall.
-4. Install Docker Engine, the Docker Compose plugin, Nginx, and Certbot.
+## 2. Frontend Deployment on Vercel
 
-## 2. Configure the application
+1. Import the repository into Vercel and set the **Root Directory** to `frontend`.
+2. Configure Build & Development Settings:
+   - **Framework Preset**: Vite
+   - **Build Command**: `npm run build`
+   - **Output Directory**: `dist`
+   - **Install Command**: `npm install`
+3. Environment Variables:
+   - `VITE_API_URL`: Your backend API base URL (e.g. `https://collaborative-cloud-ide-backend.onrender.com/api`)
+   - `VITE_SOCKET_URL`: Your backend base URL (e.g. `https://collaborative-cloud-ide-backend.onrender.com`)
 
+> **CRITICAL**: Never append `:5173` to production backend URLs. The frontend communicates with the backend over HTTPS (port 443), and the backend reverse proxies application preview traffic internally.
+
+---
+
+## 3. Backend Deployment on Render
+
+1. Create a new **Web Service** connected to your repository.
+2. Configure settings:
+   - **Root Directory**: `backend`
+   - **Environment**: Node
+   - **Build Command**: `npm install`
+   - **Start Command**: `npm start`
+   - **Node Version**: `18.x` or `20.x`
+3. Environment Variables:
+   - `PORT`: `5000` (or leave default assigned by Render)
+   - `NODE_ENV`: `production`
+   - `MONGO_URI`: `mongodb+srv://<username>:<password>@cluster0.xxxxx.mongodb.net/collaborative-cloud-ide?retryWrites=true&w=majority`
+   - `JWT_SECRET`: High-entropy random string (e.g. generated via `openssl rand -hex 32`)
+   - `CLIENT_URL`: Your Vercel frontend URL (e.g. `https://collaborative-cloud-ide.vercel.app`)
+4. Health Check Path:
+   - Set Health Check Path to `/api/health`.
+
+---
+
+## 4. Full Production VPS Deployment (Docker Compose)
+
+For multi-tenant deployments requiring Docker container isolation:
+
+### Pre-requisites
+* Ubuntu 22.04+ LTS VPS (min 2 vCPU, 4GB RAM)
+* Docker Engine 24+ & Docker Compose v2+
+* Domain with DNS A records pointing to the VPS IP
+
+### Step 1: Clone and Configure
 ```bash
-git clone <your-repository-url> collaborative-cloud-ide
-cd collaborative-cloud-ide
+git clone https://github.com/MohammedAseelM/Collaborative-cloud-ide.git
+cd Collaborative-cloud-ide
 cp .env.example .env
-openssl rand -hex 32
 ```
 
-Replace every placeholder in `.env`. The MongoDB password in `MONGO_URI` must
-be URL-encoded if it contains characters such as `@`, `:`, `/`, or `#`.
-`CLIENT_URL` and `PUBLIC_HOST` must use the final HTTPS domain.
+Generate secure secrets and update `.env`:
+```ini
+PORT=5000
+NODE_ENV=production
+MONGO_URI=mongodb://mongodb:27017/collaborative-cloud-ide
+JWT_SECRET=your_generated_random_secret_hex_string
+CLIENT_URL=https://yourdomain.com
+PUBLIC_HOST=yourdomain.com
+```
 
-The Docker socket mount gives the backend effective control over the host
-Docker daemon. Keep the VPS dedicated to this application, restrict SSH
-access, and do not expose port 5000 or 27017.
-
-## 3. Start and verify the stack
-
+### Step 2: Launch Stack
 ```bash
-docker compose config
 docker compose up -d --build
 docker compose ps
 curl http://127.0.0.1:8080/api/health
 ```
 
-The health response should report `"success": true` and
-`"database": "connected"`. If a container fails, inspect:
+### Step 3: Nginx & SSL Setup
+Configure Nginx on the host to route incoming HTTPS traffic:
+```nginx
+server {
+    server_name yourdomain.com;
 
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+Obtain free SSL certificate via Let's Encrypt:
 ```bash
-docker compose logs --tail=200 backend
-docker compose logs --tail=200 mongodb
+sudo certbot --nginx -d yourdomain.com
 ```
 
-## 4. Configure host Nginx and HTTPS
+---
 
-Copy `deploy/nginx.conf` to `/etc/nginx/sites-available/mycloudide`, replace
-the example domain if necessary, then enable it:
-
-```bash
-sudo ln -s /etc/nginx/sites-available/mycloudide /etc/nginx/sites-enabled/mycloudide
-sudo nginx -t
-sudo systemctl reload nginx
-sudo certbot --nginx -d mycloudide.com -d www.mycloudide.com
-```
-
-Certbot updates the Nginx configuration and installs automatic certificate
-renewal. Confirm renewal without changing the live certificate:
-
-```bash
-sudo certbot renew --dry-run
-```
-
-The HTTPS proxy forwards WebSocket upgrade headers and keeps long-lived
-Socket.IO connections open.
-
-## 5. Production verification
-
-Verify all of the following from the public HTTPS URL:
-
-1. Register/login and refresh the page; the authentication cookie remains.
-2. Create a project and create/read/update/delete files.
-3. Open the same project in two browser sessions; presence and edits update.
-4. Open the terminal and run a command.
-5. Create a React + Vite project, install dependencies, run it, stop it, and
-   build it.
-6. Open the live preview and confirm the browser can reach it.
-7. Reboot the VPS and confirm MongoDB data and workspace files remain.
-
-## Operations
-
-```bash
-docker compose pull
-docker compose up -d --build
-docker compose ps
-docker system df
-```
-
-Back up the `db_data` and `workspace_data` Docker volumes before upgrades.
-Monitor disk usage because project dependencies and execution images can grow
-quickly. Rotate or ship application logs rather than allowing the VPS disk to
-fill.
+## 5. MongoDB Atlas Setup
+1. Create a cluster on MongoDB Atlas (M0 Free Tier or higher).
+2. Create a Database User with read/write access.
+3. In Network Access, add `0.0.0.0/0` (for Render/Vercel dynamic IPs) or your VPS static IP.
+4. Obtain connection string and paste into `MONGO_URI`.

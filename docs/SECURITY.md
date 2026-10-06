@@ -1,74 +1,96 @@
-# Collaborative Cloud IDE - Security Documentation
+# Collaborative Cloud IDE - Security Architecture & Audit Report
 
-This document explains the security architecture, safeguards, and defensive measures implemented in the Collaborative Cloud IDE.
+This document outlines the security controls, access models, defensive safeguards, and vulnerability mitigations implemented across the Collaborative Cloud IDE platform.
 
 ---
 
 ## 1. Authentication & Session Management
 
-The platform secures user sessions using **JSON Web Tokens (JWT)** stored in the browser's cookie storage.
-
-### Cookie Configuration
-When a user logs in or registers, the server generates a token and sets it as an HTTP cookie with the following security flags:
-* `httpOnly: true`: Prevents client-side scripts (such as JavaScript) from accessing the cookie, eliminating token theft via Cross-Site Scripting (XSS) attacks.
-* `secure: true`: Ensures the browser sends the cookie only over encrypted (HTTPS) connections.
-* `sameSite: "strict"`: Instructs the browser to only send the cookie with requests originating from the same site, mitigating Cross-Site Request Forgery (CSRF) attacks.
-
----
-
-## 2. Password Hashing & Storage
-
-Passwords are never stored in plain text.
-* **Bcrypt salting**: A Mongoose pre-save hook automatically salts and hashes the password before saving it to MongoDB, using `bcryptjs` with a work factor of 10 salt rounds.
-* **Schema Exclusion**: The User model defines the password field with `select: false`. Database queries (such as fetching user details or listing users) will not return the hashed password by default unless explicitly requested.
+* **Cryptographic Password Hashing**: Passwords are never stored in plaintext. They are salted and hashed using `bcryptjs` with a cost factor of 10 rounds. The password field is configured with `select: false` on the Mongoose `User` schema so queries never leak credential hashes.
+* **JWT Token Security**:
+  * Issued with cryptographically signed HMAC SHA-256 (`JWT_SECRET`).
+  * Tokens are set in HTTP cookies with `httpOnly: true` (mitigates XSS extraction), `secure: true` in production, and `sameSite: "strict"` (mitigates CSRF).
+  * Expired or malformed tokens receive immediate `401 Unauthorized` responses.
+* **Brute-Force Rate Limiting (`authLimiter`)**: Authentication endpoints (`/api/auth/register`, `/api/auth/login`, `/api/auth/forgot-password`, `/api/auth/reset-password`) are strictly rate-limited to 10 attempts per 15 minutes per IP address to thwart dictionary attacks.
 
 ---
 
-## 3. Role-Based Access Control (RBAC)
+## 2. Server-Side Authorization & Role-Based Access Control (RBAC)
 
-The platform supports four roles, each with increasing levels of authority:
+> **CORE PRINCIPLE**: The server NEVER trusts client-side authorization claims. Hiding buttons in the React UI is strictly an ergonomic UX enhancement; every protected action is verified independently on the backend.
 
-| Role | Workspace Access | Code Execution | File Management | Invite Team Members | Rename/Delete Project |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Owner** | Yes | Yes | Yes | Yes (Can promote members) | Yes |
-| **Admin** | Yes | Yes | Yes | Yes | No |
-| **Editor** | Yes | Yes | Yes | No | No |
-| **Viewer** | Yes (Read-Only) | No | No | No | No |
+### Project Role Hierarchy
+* **Owner**: Full control. Only user permitted to rename/delete the project, alter member roles, or delete workspaces.
+* **Admin**: Project administration, file management, code execution, dependency installation, and sending invitations.
+* **Editor**: Code editing, saving, building, and running application servers.
+* **Viewer**: Read-only access. Write operations (file creation, modification, deletion, code runs, terminal execution) are rejected with `403 Forbidden`. Monaco Editor is locked in `readOnly` mode.
 
-### Implementation
-Permission checks are enforced on both the backend and frontend:
-* **Backend validation**: The `verifyProjectPermission` utility checks the user's role against the minimum required role for the requested operation. If unauthorized, it returns a `403 Forbidden` response.
-* **Frontend UI enforcement**: The frontend hides write-sensitive buttons (e.g. Run Code, Save Snapshot, File Additions) and configures the Monaco Editor option to `readOnly: true` when the user has a Viewer role.
+Every project endpoint executes `verifyProjectPermission(req.user._id, project, minimumRole)` before allowing operations to proceed.
 
 ---
 
-## 4. Protected Routes & Authorization Middleware
+## 3. Real-Time Socket.IO Room Authorization
 
-* **Authentication Guard**: The `protect` middleware intercepts HTTP requests, extracts the JWT from cookies, verifies it, and attaches the user's details to `req.user`. Requests without a valid token receive a `401 Unauthorized` response.
-* **Admin Guard**: The `admin` middleware restricts endpoints in `admin.routes.js` to users with `role: "admin"`. Standard users attempting to access these routes receive a `403 Forbidden` response.
+To prevent cross-project eavesdropping and unauthorized code tampering:
 
----
-
-## 5. Input Validation & Sanitization
-
-To prevent SQL/NoSQL injection and cross-site scripting:
-* **Express Validator**: Incoming requests are validated using `express-validator` middleware. Parameters are checked for email formats, password lengths, and required string inputs.
-* **Mongoose Schema Validation**: Schema paths use strong validation rules, enforcing enum limits, length bounds, and sanitizing fields before database insertion.
-
----
-
-## 6. Rate Limiting & DDoS Mitigation
-
-To protect API endpoints from denial-of-service (DDoS) and brute-force login attempts:
-* The `express-rate-limit` middleware limits client requests to **100 requests per 15 minutes** per IP.
-* IP addresses that exceed this limit receive a `429 Too Many Requests` response.
+* **Authentication Handshake**: Socket connections must present a valid JWT in the cookie header or connection auth payload.
+* **Room Join Verification (`project:${projectId}`)**:
+  - A user cannot join a project room simply by sending a `projectId`.
+  - The socket server validates against MongoDB that `socket.user._id` is an active member or owner of the project before permitting `socket.join(room)`.
+* **File Join Verification (`file:${fileId}`)**:
+  - When a client requests `join-file`, the server fetches the file record, looks up its owning `project`, and verifies user membership before admitting the socket to the document editing room.
+* **Event Scoping**: Typing indicators, cursors, chat messages, and file synchronizations are strictly scoped to verified rooms.
 
 ---
 
-## 7. HTTP Header Hardening (Helmet)
+## 4. Live Preview Proxy Security & Anti-SSRF Safeguards
 
-The server integrates the **Helmet** middleware to configure secure HTTP headers:
-* **Content Security Policy (CSP)**: Restricts the origins from which scripts, styles, and assets can be loaded.
-* **X-Frame-Options**: Set to `SAMEORIGIN` to prevent clickjacking attacks by blocking the app from being embedded in external iframes.
-* **Strict-Transport-Security (HSTS)**: Forces browsers to use secure HTTPS connections.
-* **X-Content-Type-Options**: Set to `nosniff` to prevent the browser from interpreting files as a different MIME type than declared.
+Application previews are routed through `/preview/:projectId/` using an Express reverse proxy.
+
+* **Identity & Membership Verification**:
+  - The preview proxy intercepts all requests and validates the user's JWT from cookies or headers.
+  - Verifies that the user has at least `Viewer` permissions on the requested project before proxying any byte of response.
+* **Parameter Validation**:
+  - `projectId` is strictly validated against `^[a-fA-F0-9]{24}$` to prevent injection or route desynchronization.
+* **SSRF Prevention**:
+  - The proxy destination is **never** determined by user input.
+  - The backend resolves the port strictly from its internal, in-memory runtime registry (`projectRunner.service.js`).
+  - Target URLs are hardcoded to `http://127.0.0.1:${targetPort}/`.
+* **Port Isolation**:
+  - Dev servers (e.g., Vite on port 5173) bind strictly to `127.0.0.1` and are never bound to external interfaces (`0.0.0.0`) in production.
+
+---
+
+## 5. File System & Path Traversal Mitigations
+
+* **Safe Path Resolution (`safeJoin`)**:
+  - All workspace file operations resolve file paths using strict canonical validation:
+  ```javascript
+  const safePath = path.resolve(workspaceRoot, relativePath);
+  if (!safePath.startsWith(workspaceRoot)) {
+    throw new Error("Access denied: Path traversal detected.");
+  }
+  ```
+  - Rejects `../`, `..\`, absolute paths (`/etc/passwd`, `C:\Windows`), Windows drive prefixes, and null bytes.
+* **File Node Flat Structure**: Files are represented in MongoDB as isolated `FileNode` documents with explicit `project` and `parentId` foreign keys, preventing filesystem leaks across projects.
+
+---
+
+## 6. Code Execution Sandboxing & Resource Constraints
+
+* **Docker Sandbox Isolation (VPS Mode)**:
+  - Untrusted code runs in ephemeral Alpine/Node containers with `--network none` (or controlled proxy access).
+  - Explicit resource constraints: Memory capped at 512MB, CPU capped at 1.0 core, process count limited to prevent fork bombs.
+  - Containers are run as non-root users (`USER node`). Privileged containers (`--privileged`) are strictly prohibited.
+* **Native Process Fallback (Render/PaaS Mode)**:
+  - Spawns child processes using sanitized environment variables (`getProjectExecutionEnv()`).
+  - High-privilege host credentials and system secrets (`MONGO_URI`, `JWT_SECRET`) are deleted from the child execution environment.
+  - Processes are terminated with timeout limits to prevent runaway infinite loops.
+
+---
+
+## 7. HTTP Hardening & Observability
+
+* **Helmet**: Configures HTTP response headers including `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, and strict HSTS policies.
+* **CORS**: Enforces origin restrictions based on configured `CLIENT_URL`.
+* **Sanitized Structured Logging**: Winston logs capture runtime IDs, exit codes, and timestamps, but strictly redact passwords, tokens, API keys, and connection strings.

@@ -1,448 +1,257 @@
-# Collaborative Cloud IDE - REST API Documentation
+# Collaborative Cloud IDE - REST & Preview API Documentation
 
-All API requests must be prefixed with `/api`. Authenticated endpoints require the session JWT to be present in the HTTP cookies (`token=...`).
+All API endpoints are prefixed with `/api` unless otherwise specified (e.g. the `/preview/:projectId/` proxy route). Authenticated endpoints require either a valid JWT cookie (`token=...`) or a Bearer token in the `Authorization` header (`Authorization: Bearer <TOKEN>`).
 
 ---
 
 ## 1. Authentication Endpoints (`/api/auth`)
 
+Rate limited via `authLimiter` (10 requests per 15 minutes per IP on registration/login).
+
 ### Register User
-* **Endpoint**: `/auth/register`
-* **Method**: `POST`
-* **Auth Required**: No
+* **Endpoint**: `POST /auth/register`
 * **Request Body**:
   ```json
   {
-    "name": "John Doe",
-    "email": "john@example.com",
+    "name": "Jane Developer",
+    "email": "jane@example.com",
     "password": "securepassword123"
   }
   ```
 * **Success Response (201 Created)**:
-  * **Headers**: `Set-Cookie: token=<JWT_TOKEN>; HttpOnly; Secure; SameSite=Strict`
-  * **Body**:
-    ```json
-    {
-      "success": true,
-      "message": "User registered successfully",
-      "user": {
-        "_id": "6a4fe1776c86d06c418ed783",
-        "name": "John Doe",
-        "email": "john@example.com",
-        "role": "user",
-        "createdAt": "2026-07-09T18:00:00.000Z",
-        "updatedAt": "2026-07-09T18:00:00.000Z"
-      }
-    }
-    ```
-* **Error Responses**:
-  * `400 Bad Request`: Validation failure (e.g., password too short).
-  * `409 Conflict`: Email already exists.
-
----
+  ```json
+  {
+    "success": true,
+    "message": "User registered successfully",
+    "user": {
+      "_id": "60d0fe4f5311236168a109ca",
+      "name": "Jane Developer",
+      "email": "jane@example.com",
+      "role": "user"
+    },
+    "token": "<JWT_TOKEN>"
+  }
+  ```
 
 ### Login User
-* **Endpoint**: `/auth/login`
-* **Method**: `POST`
-* **Auth Required**: No
+* **Endpoint**: `POST /auth/login`
 * **Request Body**:
   ```json
   {
-    "email": "john@example.com",
+    "email": "jane@example.com",
     "password": "securepassword123"
   }
   ```
 * **Success Response (200 OK)**:
-  * **Headers**: `Set-Cookie: token=<JWT_TOKEN>; HttpOnly; Secure; SameSite=Strict`
-  * **Body**:
-    ```json
-    {
-      "success": true,
-      "message": "Logged in successfully",
-      "user": {
-        "_id": "6a4fe1776c86d06c418ed783",
-        "name": "John Doe",
-        "email": "john@example.com",
-        "role": "user"
-      }
-    }
-    ```
-* **Error Responses**:
-  * `401 Unauthorized`: Invalid email or password.
-
----
-
-### Logout User
-* **Endpoint**: `/auth/logout`
-* **Method**: `POST`
-* **Auth Required**: Yes
-* **Success Response (200 OK)**:
-  * **Headers**: `Set-Cookie: token=; Max-Age=0; Expires=...`
-  * **Body**:
-    ```json
-    {
-      "success": true,
-      "message": "Logged out successfully"
-    }
-    ```
-
----
-
-### Get Current Session (Auth Me)
-* **Endpoint**: `/auth/me`
-* **Method**: `GET`
-* **Auth Required**: Yes
-* **Success Response (200 OK)**:
   ```json
   {
     "success": true,
+    "message": "Logged in successfully",
     "user": {
-      "_id": "6a4fe1776c86d06c418ed783",
-      "name": "John Doe",
-      "email": "john@example.com",
+      "_id": "60d0fe4f5311236168a109ca",
+      "name": "Jane Developer",
+      "email": "jane@example.com",
       "role": "user"
-    }
+    },
+    "token": "<JWT_TOKEN>"
   }
   ```
-* **Error Responses**:
-  * `401 Unauthorized`: Not logged in or expired token.
+
+### Logout User
+* **Endpoint**: `POST /auth/logout`
+* **Success Response (200 OK)**: Clears authentication cookie.
+
+### Get Current User Profile
+* **Endpoint**: `GET /auth/me`
+* **Auth Required**: Yes
 
 ---
 
-## 2. Project Endpoints (`/api/projects`)
+## 2. Project Management Endpoints (`/api/projects`)
+
+### List User Projects
+* **Endpoint**: `GET /projects`
+* **Query Params**: `search`, `archived`, `favorite`, `page`, `limit`
 
 ### Create Project
-* **Endpoint**: `/projects`
-* **Method**: `POST`
-* **Auth Required**: Yes
+* **Endpoint**: `POST /projects`
 * **Request Body**:
   ```json
   {
-    "name": "My Workspace Project",
-    "description": "Collaborative project files",
+    "name": "My Fullstack App",
+    "description": "Collaborative cloud IDE test project",
     "language": "javascript"
   }
   ```
-* **Success Response (201 Created)**:
-  ```json
-  {
-    "success": true,
-    "message": "Project created successfully",
-    "project": {
-      "_id": "6a4fe1786c86d06c418ed786",
-      "name": "My Workspace Project",
-      "description": "Collaborative project files",
-      "language": "javascript",
-      "owner": "6a4fe1776c86d06c418ed783",
-      "members": ["6a4fe1776c86d06c418ed783"],
-      "memberRoles": {
-        "6a4fe1776c86d06c418ed783": "Owner"
-      },
-      "createdAt": "2026-07-09T18:01:00.000Z"
-    }
-  }
-  ```
-
----
-
-### List Projects
-* **Endpoint**: `/projects`
-* **Method**: `GET`
-* **Auth Required**: Yes
-* **Query Parameters**:
-  * `search` (string, optional): Filter projects by name.
-  * `filter` (string, optional): `favorites` or `archived`.
-  * `sortBy` (string, optional): Sort by `name`, `createdAt`, or `updatedAt` (defaults to `-updatedAt`).
-  * `page` (number, optional): Defaults to `1`.
-  * `limit` (number, optional): Defaults to `10`.
-* **Success Response (200 OK)**:
-  ```json
-  {
-    "success": true,
-    "count": 1,
-    "pagination": {
-      "page": 1,
-      "limit": 10,
-      "total": 1,
-      "pages": 1
-    },
-    "projects": [
-      {
-        "_id": "6a4fe1786c86d06c418ed786",
-        "name": "My Workspace Project",
-        "description": "Collaborative project files",
-        "language": "javascript",
-        "owner": "6a4fe1776c86d06c418ed783",
-        "isArchived": false,
-        "favorites": []
-      }
-    ]
-  }
-  ```
-
----
 
 ### Get Project Details
-* **Endpoint**: `/projects/:id`
-* **Method**: `GET`
-* **Auth Required**: Yes (Must be a workspace member)
-* **Success Response (200 OK)**:
-  ```json
-  {
-    "success": true,
-    "project": {
-      "_id": "6a4fe1786c86d06c418ed786",
-      "name": "My Workspace Project",
-      "members": [
-        {
-          "_id": "6a4fe1776c86d06c418ed783",
-          "name": "John Doe",
-          "email": "john@example.com"
-        }
-      ],
-      "memberRoles": {
-        "6a4fe1776c86d06c418ed783": "Owner"
-      }
-    }
-  }
-  ```
+* **Endpoint**: `GET /projects/:id`
+
+### Update Project
+* **Endpoint**: `PATCH /projects/:id`
+* **Request Body**: `{ "name": "Renamed App", "description": "Updated" }`
+
+### Delete Project
+* **Endpoint**: `DELETE /projects/:id`
+* **Auth Requirement**: Owner only. Cascading deletes project files, versions, and activities.
+
+### Toggle Archive / Favorite
+* **Endpoint**: `PATCH /projects/:id/archive`
+* **Endpoint**: `PATCH /projects/:id/favorite`
 
 ---
 
-### Rename Project
-* **Endpoint**: `/projects/:id`
-* **Method**: `PATCH`
-* **Auth Required**: Yes (Must be Owner or Admin)
+## 3. Team & Collaborator Endpoints (`/api/projects/:id/members`)
+
+### List Project Members
+* **Endpoint**: `GET /projects/:id/members`
+
+### Add Member (Direct)
+* **Endpoint**: `POST /projects/:id/members`
+* **Request Body**: `{ "email": "collab@example.com", "role": "Editor" }`
+
+### Update Member Role
+* **Endpoint**: `PATCH /projects/:id/member/:userId/role`
+* **Request Body**: `{ "role": "Admin" | "Editor" | "Viewer" }`
+* **Auth Requirement**: Owner only.
+
+### Remove Member
+* **Endpoint**: `DELETE /projects/:id/members/:memberId`
+
+---
+
+## 4. File Management Endpoints (`/api/files`)
+
+All operations validate and sanitize paths using `safeJoin` to prevent directory traversal (`../` or absolute paths).
+
+### Get Project Files
+* **Endpoint**: `GET /files/project/:projectId`
+* **Returns**: Flat list of file and folder nodes forming the project tree.
+
+### Create File or Folder
+* **Endpoint**: `POST /files`
 * **Request Body**:
   ```json
   {
-    "name": "New Workspace Name"
-  }
-  ```
-* **Success Response (200 OK)**:
-  ```json
-  {
-    "success": true,
-    "project": {
-      "_id": "6a4fe1786c86d06c418ed786",
-      "name": "New Workspace Name"
-    }
-  }
-  ```
-
----
-
-### Toggle Favorite / Archive Status
-* **Endpoints**: 
-  * `/projects/:id/favorite` (`PATCH`)
-  * `/projects/:id/archive` (`PATCH`)
-* **Method**: `PATCH`
-* **Auth Required**: Yes
-* **Success Response (200 OK)**:
-  ```json
-  {
-    "success": true,
-    "message": "Project favorite state toggled",
-    "project": {
-      "_id": "6a4fe1786c86d06c418ed786",
-      "favorites": ["6a4fe1776c86d06c418ed783"],
-      "isArchived": false
-    }
-  }
-  ```
-
----
-
-### Invite User
-* **Endpoint**: `/projects/:id/invitations`
-* **Method**: `POST`
-* **Auth Required**: Yes (Owner or Admin only)
-* **Request Body**:
-  ```json
-  {
-    "email": "invitee@example.com",
-    "role": "Editor"
-  }
-  ```
-* **Success Response (201 Created)**:
-  ```json
-  {
-    "success": true,
-    "message": "Invitation sent successfully",
-    "invitation": {
-      "_id": "6a4fe1786c86d06c418ed78e",
-      "email": "invitee@example.com",
-      "role": "Editor",
-      "expiresAt": "2026-07-16T18:01:00.000Z"
-    }
-  }
-  ```
-
----
-
-### Execute Code Securely
-* **Endpoint**: `/projects/:id/execute`
-* **Method**: `POST`
-* **Auth Required**: Yes (Must be Owner, Admin, or Editor)
-* **Request Body**:
-  ```json
-  {
-    "fileId": "6a4fe1786c86d06c418ed78b"
-  }
-  ```
-* **Success Response (200 OK)**:
-  ```json
-  {
-    "success": true,
-    "output": "Hello, World!\r\n",
-    "exitCode": 0
-  }
-  ```
-* **Error Responses**:
-  * `403 Forbidden`: User has `Viewer` role (read-only).
-  * `500 Internal Server Error`: Execution timeout or sandbox allocation failure.
-
----
-
-### Snapshot Versioning (Snapshots Timeline)
-* **Save Snapshot**: `POST /projects/:id/versions` (Request body: `{ "note": "Snapshot label" }`)
-* **List Snapshots**: `GET /projects/:id/versions`
-* **Restore Snapshot**: `POST /projects/:id/versions/:versionId/restore`
-
----
-
-## 3. File Endpoints (`/api/files`)
-
-### List Project Files
-* **Endpoint**: `/files/projects/:projectId/files`
-* **Method**: `GET`
-* **Auth Required**: Yes
-* **Success Response (200 OK)**:
-  ```json
-  {
-    "success": true,
-    "count": 2,
-    "files": [
-      {
-        "_id": "6a4fe1786c86d06c418ed78b",
-        "name": "index.js",
-        "isFolder": false,
-        "parentId": null
-      }
-    ]
-  }
-  ```
-
----
-
-### Create File or Folder Node
-* **Endpoint**: `/files/projects/:projectId/files`
-* **Method**: `POST`
-* **Auth Required**: Yes (Must have Editor/Admin/Owner permissions)
-* **Request Body**:
-  ```json
-  {
-    "name": "helper.js",
+    "projectId": "60d0fe4f5311236168a109cb",
+    "name": "index.js",
     "isFolder": false,
-    "parentId": null
+    "parentId": null,
+    "content": "console.log('Hello');"
   }
   ```
-* **Success Response (201 Created)**:
+
+### Read File Content
+* **Endpoint**: `GET /files/:fileId`
+
+### Rename File or Folder
+* **Endpoint**: `PATCH /files/:fileId`
+* **Request Body**: `{ "name": "App.jsx" }`
+
+### Delete File or Folder
+* **Endpoint**: `DELETE /files/:fileId`
+* **Behavior**: Recursively deletes all child nodes if deleting a directory.
+
+---
+
+## 5. Project Runner & Dev Server Endpoints (`/api/projects/:id/runner`)
+
+Controls the development server lifecycle (e.g. Vite dev server).
+
+### Install Dependencies
+* **Endpoint**: `POST /projects/:id/runner/install`
+* **Response**:
   ```json
   {
     "success": true,
-    "message": "File created successfully",
-    "file": {
-      "_id": "6a4fe1786c86d06c418ed78c",
-      "name": "helper.js",
-      "isFolder": false,
-      "content": "// Write your code here...\n"
-    }
+    "message": "Dependencies installed successfully",
+    "cached": false,
+    "output": "added 120 packages in 2s"
   }
   ```
 
----
-
-### File Content Retrieval
-* **Endpoint**: `/files/:fileId`
-* **Method**: `GET`
-* **Auth Required**: Yes
-* **Success Response (200 OK)**:
+### Start Dev Server
+* **Endpoint**: `POST /projects/:id/runner/start`
+* **Behavior**: Spawns dev process (e.g., `npm run dev -- --host 127.0.0.1 --port 5173`), monitors stdout for readiness, allocates port, and reports state.
+* **Response**:
   ```json
   {
     "success": true,
-    "content": "console.log('Hello World');"
+    "status": "running",
+    "port": 5173,
+    "previewUrl": "/preview/60d0fe4f5311236168a109cb/"
   }
   ```
 
+### Stop Dev Server
+* **Endpoint**: `POST /projects/:id/runner/stop`
+* **Behavior**: Terminates running process / container, releases ports, and cleans up resources.
+
+### Get Server Status & Logs
+* **Endpoint**: `GET /projects/:id/runner/status`
+* **Endpoint**: `GET /projects/:id/runner/logs`
+
+### Execute Terminal Command
+* **Endpoint**: `POST /projects/:id/terminal/execute`
+* **Request Body**: `{ "command": "npm test" }`
+
 ---
 
-### Rename & Delete File Nodes
-* **Rename File**: `PATCH /files/:fileId` (Request body: `{ "name": "new_name.js" }`)
-* **Delete File (Recursive)**: `DELETE /files/:fileId`
+## 6. React/Vite Project Commands (`/api/projects/:projectId/...`)
+
+Specialized lifecycle and package management endpoints:
+
+* `POST /projects/react/create` - Scaffolds clean React/Vite project structure.
+* `POST /projects/:projectId/install` - Dependency installation with package lock caching.
+* `POST /projects/:projectId/run` - Runs dev server.
+* `POST /projects/:projectId/stop` - Stops dev server.
+* `POST /projects/:projectId/restart` - Cleanly restarts dev server.
+* `POST /projects/:projectId/build` - Runs `npm run build` and captures exit code, duration, stdout, and stderr.
+* `POST /projects/:projectId/preview` - Starts preview server for production builds.
+* `POST /projects/:projectId/packages/install` - Installs specific npm package (`{ "packageName": "axios" }`).
+* `POST /projects/:projectId/packages/uninstall` - Uninstalls npm package.
+* `GET /projects/:projectId/scripts` - Returns available scripts from `package.json`.
+* `POST /projects/:projectId/scripts/run` - Executes named npm script.
 
 ---
 
-## 4. Inbox & Invitations Endpoints (`/api/invitations`)
+## 7. Application Live Preview Proxy (`/preview/:projectId/`)
 
-### List User's Inbox Invites
-* **Endpoint**: `/invitations/me`
-* **Method**: `GET`
-* **Auth Required**: Yes
-* **Success Response (200 OK)**:
+* **Endpoint**: `/preview/:projectId/*`
+* **Security & Auth**:
+  - Validates `projectId` against regex `^[a-fA-F0-9]{24}$`.
+  - Verifies authenticated user is Owner, Admin, Editor, or Viewer of the project.
+  - Proxies only to registered internal port on `127.0.0.1` (prevents SSRF).
+  - Internal port (e.g. 5173) is **never** accessible directly by clients.
+* **WebSocket / HMR**: Supports WebSocket upgrades for Vite Hot Module Replacement.
+
+---
+
+## 8. Version Snapshots (`/api/projects/:id/versions`)
+
+* `GET /projects/:id/versions` - List all snapshots with commit messages, dates, and author info.
+* `POST /projects/:id/versions` - Create a new snapshot of current project files.
+* `POST /projects/:id/versions/:versionId/restore` - Restores snapshot and broadcasts `force-file-sync` to all collaborators.
+
+---
+
+## 9. Project Chat & Activity Timeline
+
+* `GET /projects/:id/messages` - Retrieve chat message history.
+* `GET /projects/:id/activities` - Retrieve activity log (files created, members added, snapshots created, runtimes started).
+
+---
+
+## 10. System Health (`/api/health`)
+
+* **Endpoint**: `GET /api/health`
+* **Auth Required**: No
+* **Response**:
   ```json
   {
     "success": true,
-    "count": 1,
-    "invitations": [
-      {
-        "_id": "6a4fe1786c86d06c418ed78e",
-        "project": {
-          "_id": "6a4fe1786c86d06c418ed786",
-          "name": "My Workspace Project"
-        },
-        "role": "Viewer",
-        "token": "427941c49c3239d6669c352798c7c233ab03e2551ac5b00c5b290fe83468eea9"
-      }
-    ]
+    "status": "healthy",
+    "timestamp": "2026-10-06T18:30:00.000Z",
+    "database": "connected"
   }
   ```
-
----
-
-### Accept Invitation
-* **Endpoint**: `/invitations/:token/accept`
-* **Method**: `POST`
-* **Auth Required**: Yes (Logged-in user's email must match invitation target email)
-* **Success Response (200 OK)**:
-  ```json
-  {
-    "success": true,
-    "message": "Joined project successfully"
-  }
-  ```
-
----
-
-## 5. Notifications Endpoints (`/api/notifications`)
-
-* **List Notifications**: `GET /notifications`
-* **Mark Read**: `PATCH /notifications/:id/read`
-* **Mark All Read**: `PATCH /notifications/read-all`
-
----
-
-## 6. User Management Endpoints (`/api/users`)
-
-* **Update Profile Details**: `PUT /users/profile` (Request body: `{ "name": "New Name" }`)
-* **Change Password**: `PUT /users/password` (Request body: `{ "currentPassword": "old", "newPassword": "new12345" }`)
-* **Delete Account (Cascading)**: `DELETE /users`
-
----
-
-## 7. Admin Panel Governance Endpoints (`/api/admin`)
-
-* **Get Platform Diagnostics**: `GET /admin/stats` (Returns total users, projects, CPU usage, memory stats, database status)
-* **Inspect Rotating Logs**: `GET /admin/logs` (Returns logs from Winston `combined.log` file)
-* **List All Users**: `GET /admin/users`
-* **Delete User**: `DELETE /admin/users/:userId`

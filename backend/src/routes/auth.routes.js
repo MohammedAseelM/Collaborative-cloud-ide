@@ -4,6 +4,8 @@
 // middleware, following REST conventions.
 
 import express from "express";
+import rateLimit from "express-rate-limit";
+import { env } from "../config/env.js";
 import {
   registerUser,
   loginUser,
@@ -22,18 +24,31 @@ import {
   handleValidationErrors,
 } from "../middlewares/validators/auth.validator.js";
 
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: env.NODE_ENV === "production" ? 50 : 500,
+  skip: () => env.NODE_ENV === "test" || process.env.NODE_ENV === "test",
+  message: {
+    success: false,
+    message: "Too many authentication attempts from this IP, please try again after 15 minutes",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 const router = express.Router();
 
 // @route  POST /api/auth/register
 router.post(
   "/register",
+  authLimiter,
   registerValidationRules,
   handleValidationErrors,
   registerUser
 );
 
 // @route  POST /api/auth/login
-router.post("/login", loginValidationRules, handleValidationErrors, loginUser);
+router.post("/login", authLimiter, loginValidationRules, handleValidationErrors, loginUser);
 
 // @route  POST /api/auth/logout
 router.post("/logout", protect, logoutUser);
