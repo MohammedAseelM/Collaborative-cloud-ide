@@ -35,6 +35,32 @@ export const getActiveProjectPort = (projectId) => {
   return server ? server.port : null;
 };
 
+/**
+ * Builds a cross-platform execution environment ensuring local project binaries
+ * (node_modules/.bin) take precedence, system PATH is preserved, and standard UNIX
+ * directories (/usr/local/bin:/usr/bin:/bin) exist on Linux/Docker.
+ */
+export const getProjectExecutionEnv = (projectDir, extraEnv = {}) => {
+  const isWindows = process.platform === "win32";
+  const systemPath = process.env.PATH || process.env.Path || "";
+  const localBin = path.join(projectDir, "node_modules", ".bin");
+  const fallbackPaths = isWindows
+    ? []
+    : ["/usr/local/bin", "/usr/bin", "/bin", "/usr/local/sbin", "/usr/sbin", "/sbin"];
+
+  const pathParts = [localBin, systemPath, ...fallbackPaths].filter(Boolean);
+  const combinedPath = pathParts.join(path.delimiter);
+
+  return {
+    ...process.env,
+    PATH: combinedPath,
+    Path: combinedPath,
+    NODE_ENV: process.env.NODE_ENV || "development",
+    FORCE_COLOR: "true",
+    ...extraEnv,
+  };
+};
+
 const getWorkspaceFilePath = async (file) => {
   const project = await Project.findById(file.project).select("owner");
   if (!project) throw new Error("Project not found for file sync");
@@ -153,12 +179,20 @@ export const runProjectTerminalCommand = async (projectId, command, io = null) =
     const isWindows = process.platform === "win32";
     const shellCommand = isWindows ? "cmd.exe" : "sh";
     const shellArgs = isWindows ? ["/d", "/s", "/c", safeCommand] : ["-c", safeCommand];
+    const execEnv = getProjectExecutionEnv(projectDir);
+
+    logger.info(`[REACT RUNTIME] Executing command for project ${projectId}:\n` +
+      `  projectId: ${projectId}\n` +
+      `  projectPath: ${projectDir}\n` +
+      `  workingDirectory: ${projectDir}\n` +
+      `  command: ${safeCommand}\n` +
+      `  shell: ${shellCommand}\n` +
+      `  node: ${process.version}`
+    );
+
     const child = spawn(shellCommand, shellArgs, {
       cwd: projectDir,
-      env: {
-        ...process.env,
-        PATH: `${path.join(projectDir, "node_modules", ".bin")}${path.delimiter}${process.env.PATH || ""}`,
-      },
+      env: execEnv,
       windowsHide: true,
     });
 
@@ -194,12 +228,19 @@ export const runProjectTerminalCommand = async (projectId, command, io = null) =
       if (io) appendAndBroadcastLog(projectId, chunk.toString(), io);
     });
     child.on("error", (error) => {
+      logger.error(`[REACT RUNTIME] Command execution failed: ${error.message} (code: ${error.code || "UNKNOWN"})`);
+      appendAndBroadcastLog(projectId, `❌ Command spawn error: ${error.message}`, io);
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
       reject(error);
     });
     child.on("close", (exitCode) => {
+      if (exitCode === 127) {
+        const errorMsg = `Command "${safeCommand}" failed with exit code 127 (command not found). Ensure required executables (like vite or npm) exist and are installed.`;
+        logger.error(`[REACT RUNTIME] Exit code 127 in project ${projectId}: ${errorMsg}`);
+        appendAndBroadcastLog(projectId, `❌ ${errorMsg}`, io);
+      }
       finish({
         exitCode: exitCode ?? 1,
         timedOut,
@@ -396,9 +437,29 @@ export const installDependencies = async (projectId, io = null) => {
     }
   }
 
+  // Verify if package.json exists before attempting to install
+  const pkgJsonPath = path.join(projectDir, "package.json");
+  if (!fs.existsSync(pkgJsonPath)) {
+    await syncProjectFilesToDisk(projectId);
+  }
+  if (!fs.existsSync(pkgJsonPath)) {
+    appendAndBroadcastLog(projectId, `⚠️ No package.json found in ${projectDir}. Skipping dependency installation.`, io);
+    return true;
+  }
+
   // Skip if node_modules already exists and contains installed binaries (.bin)
+  const isWin = process.platform === "win32";
   const binPath = path.join(nodeModulesPath, ".bin");
-  if (fs.existsSync(nodeModulesPath) && fs.existsSync(binPath) && installCmd.includes("npm")) {
+  const viteBin = path.join(binPath, isWin ? "vite.cmd" : "vite");
+  const vitePkg = path.join(nodeModulesPath, "vite");
+  const hasVite = fs.existsSync(viteBin) || fs.existsSync(vitePkg);
+
+  if (project?.projectType === "react-vite") {
+    if (fs.existsSync(nodeModulesPath) && hasVite) {
+      appendAndBroadcastLog(projectId, "✔ Dependencies already installed (Vite found in node_modules).", io);
+      return true;
+    }
+  } else if (fs.existsSync(nodeModulesPath) && fs.existsSync(binPath) && installCmd.includes("npm")) {
     appendAndBroadcastLog(projectId, "✔ Dependencies already installed (node_modules present).", io);
     return true;
   }
@@ -407,17 +468,12 @@ export const installDependencies = async (projectId, io = null) => {
   appendAndBroadcastLog(projectId, `⚙ Running dependency installation: ${installCmd}...`, io);
 
   return new Promise((resolve) => {
-    const isWin = process.platform === "win32";
     const shellCmd = isWin ? "cmd.exe" : "sh";
     const args = isWin ? ["/c", installCmd] : ["-c", installCmd];
 
     const child = spawn(shellCmd, args, {
       cwd: projectDir,
-      env: {
-        ...process.env,
-        FORCE_COLOR: "true",
-        PATH: `${path.join(projectDir, "node_modules", ".bin")}${path.delimiter}${process.env.PATH || ""}`,
-      },
+      env: getProjectExecutionEnv(projectDir),
     });
 
     child.stdout.on("data", (data) => {
@@ -543,6 +599,17 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
     projectDir,
   });
 
+  // Verify package.json exists
+  const pkgJsonPath = path.join(projectDir, "package.json");
+  if (!fs.existsSync(pkgJsonPath)) {
+    await syncProjectFilesToDisk(projectId);
+  }
+  if (!fs.existsSync(pkgJsonPath)) {
+    const errorMsg = `package.json not found in project directory (${projectDir}). Cannot start development server.`;
+    appendAndBroadcastLog(projectId, `❌ [EXECUTOR] ${errorMsg}`, io);
+    throw new Error(errorMsg);
+  }
+
   // Run dependency installation first
   const installed = await installDependencies(projectId, io);
   if (!installed) {
@@ -555,11 +622,9 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
   // Inject PORT environment variable for dev server
   const isWin = process.platform === "win32";
   const envVars = {
-    ...process.env,
     PORT: String(allocatedPort),
     VITE_PORT: String(allocatedPort),
     BROWSER: "none",
-    FORCE_COLOR: "true",
   };
 
   // Adjust startCommand to pass port if Vite / Next.js.
@@ -576,19 +641,28 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
     finalCmd = `${startCmd} -- -p ${allocatedPort}`;
   }
 
-  appendAndBroadcastLog(projectId, `[INFO] Node: ${process.version}`, io);
-  appendAndBroadcastLog(projectId, `[INFO] Working Directory: ${projectDir}`, io);
-  appendAndBroadcastLog(projectId, `[EXECUTOR] Command: ${finalCmd}`, io);
-
   const shellCmd = isWin ? "cmd.exe" : "sh";
   const args = isWin ? ["/c", finalCmd] : ["-c", finalCmd];
+  const executionEnv = getProjectExecutionEnv(projectDir, envVars);
+
+  logger.info(`[REACT RUNTIME] Starting dev server:\n` +
+    `  projectId: ${projectId}\n` +
+    `  projectPath: ${projectDir}\n` +
+    `  workingDirectory: ${projectDir}\n` +
+    `  command: ${finalCmd}\n` +
+    `  arguments: ${JSON.stringify(args)}\n` +
+    `  shell: ${shellCmd}\n` +
+    `  node: ${process.version}\n` +
+    `  port: ${allocatedPort}`
+  );
+
+  appendAndBroadcastLog(projectId, `[REACT RUNTIME] Command: ${finalCmd}`, io);
+  appendAndBroadcastLog(projectId, `[REACT RUNTIME] Working Directory: ${projectDir}`, io);
+  appendAndBroadcastLog(projectId, `[REACT RUNTIME] Node: ${process.version} | Port: ${allocatedPort}`, io);
 
   const child = spawn(shellCmd, args, {
     cwd: projectDir,
-    env: {
-      ...envVars,
-      PATH: `${path.join(projectDir, "node_modules", ".bin")}${path.delimiter}${process.env.PATH || ""}`,
-    },
+    env: executionEnv,
   });
 
   const serverRecord = activeServers.get(projectId);
@@ -642,10 +716,21 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
     appendAndBroadcastLog(projectId, `[PROJECT] Status: ${targetStatus}`, io);
   } else {
     const isExited = child.exitCode !== null;
-    const errorMsg = isExited
-      ? `Server process exited prematurely with exit code ${child.exitCode}. Review terminal logs for details.`
-      : `Dev server on port ${allocatedPort} did not become ready within 15s timeout.`;
-    logger.error(`[EXECUTOR] ${errorMsg} for project ${projectId}`);
+    let errorMsg = "";
+    if (isExited) {
+      errorMsg = `Server process exited prematurely with exit code ${child.exitCode}.`;
+      if (child.exitCode === 127) {
+        errorMsg += ` (Exit code 127: Command or executable not found. Ensure Vite and npm dependencies are installed.)`;
+      }
+      errorMsg += ` Review terminal logs for details.`;
+    } else {
+      errorMsg = `Dev server on port ${allocatedPort} did not become ready within 15s timeout.`;
+    }
+    logger.error(`[REACT RUNTIME] Dev server failure: ${errorMsg} for project ${projectId}\n` +
+      `  exitCode: ${child.exitCode}\n` +
+      `  command: ${finalCmd}\n` +
+      `  cwd: ${projectDir}`
+    );
     appendAndBroadcastLog(projectId, `❌ [EXECUTOR] ${errorMsg}`, io);
     await updateServerStatus(projectId, "error", null, io);
     releaseProjectPort(projectId);

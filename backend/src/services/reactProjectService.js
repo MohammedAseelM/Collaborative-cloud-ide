@@ -399,6 +399,16 @@ export const buildReactProject = async (projectId, io = null) => {
       error.statusCode = 400;
       throw error;
     }
+
+    const projectDir = path.resolve(env.WORKSPACE_ROOT, project.owner.toString(), projectId.toString());
+    const isWin = process.platform === "win32";
+    const viteBin = path.join(projectDir, "node_modules", ".bin", isWin ? "vite.cmd" : "vite");
+    const vitePkg = path.join(projectDir, "node_modules", "vite");
+    if (!fs.existsSync(viteBin) && !fs.existsSync(vitePkg)) {
+      appendAndBroadcastLog(projectId, "⚙ Vite binary not detected in node_modules, ensuring clean install before build...", io);
+      await installDependencies(projectId, io);
+    }
+
     const result = await runProjectTerminalCommand(projectId, "npm run build", io);
     if (result.output) {
       // Ensure final output lines are visible in terminal
@@ -415,7 +425,10 @@ export const buildReactProject = async (projectId, io = null) => {
     }
 
     if (result.exitCode !== 0) {
-      const buildErrorMsg = `Build failed with exit code ${result.exitCode}. Review terminal logs for details.`;
+      let buildErrorMsg = `Build failed with exit code ${result.exitCode}. Review terminal logs for details.`;
+      if (result.exitCode === 127) {
+        buildErrorMsg = `Build failed with exit code 127 (command not found: vite). Review terminal logs for details.`;
+      }
       appendAndBroadcastLog(projectId, `❌ [BUILD] ${buildErrorMsg}`, io);
       const err = new Error(buildErrorMsg);
       err.statusCode = 400;

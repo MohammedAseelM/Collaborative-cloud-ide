@@ -34,12 +34,17 @@ function dockerOptions(workspace, port) {
   return {
     Image: IMAGE,
     WorkingDir: "/workspace",
+    Env: [
+      "PATH=/workspace/node_modules/.bin:/usr/local/bin:/usr/bin:/bin",
+      "NODE_ENV=development",
+      "FORCE_COLOR=true",
+    ],
     HostConfig: {
       Binds: [`${workspace}:/workspace`],
       Memory: 1024 * 1024 * 1024,
       NanoCpus: 1_000_000_000,
       PidsLimit: 256,
-      CapDrop: ["ALL"],
+      CapDrop: ["NET_RAW", "SYS_ADMIN", "SYS_PTRACE", "SYS_MODULE", "MKNOD"],
       SecurityOpt: ["no-new-privileges:true"],
       ...(port ? {
         PortBindings: {
@@ -97,7 +102,7 @@ async function runOneShot(projectId, args, { timeoutMs = 180_000, installIfMissi
     await ensureImage();
     const nodeModulesVolume = await ensureProjectVolume(projectId);
     const script = installIfMissing
-      ? "if [ ! -d node_modules ]; then npm install --no-audit --no-fund || exit $?; fi; exec \"$@\""
+      ? "if [ ! -f node_modules/.bin/vite ] && [ ! -d node_modules/vite ]; then npm install --legacy-peer-deps --no-audit --no-fund || exit $?; fi; exec \"$@\""
       : null;
     const cmd = script ? ["sh", "-lc", script, "sandbox", ...args] : args;
     container = await docker.createContainer({
@@ -147,7 +152,7 @@ export async function startReactSandbox(projectId, port, mode = "dev", callbacks
     await ensureImage();
     const nodeModulesVolume = await ensureProjectVolume(projectId);
     const npmScript = mode === "preview" ? "preview" : "dev";
-    const launchScript = `if [ ! -d node_modules ]; then npm install --no-audit --no-fund || exit $?; fi; exec npm run ${npmScript} -- --host 0.0.0.0 --port ${CONTAINER_PORT}`;
+    const launchScript = `if [ ! -f node_modules/.bin/vite ] && [ ! -d node_modules/vite ]; then npm install --legacy-peer-deps --no-audit --no-fund || exit $?; fi; exec npm run ${npmScript} -- --host 0.0.0.0 --port ${CONTAINER_PORT}`;
     const containerOptions = {
       ...dockerOptions(workspace, port),
       name: `ccide-react-${projectId}`,
