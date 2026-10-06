@@ -10,7 +10,22 @@ import logger from "../utils/logger.js";
 const proxyInstances = new Map();
 
 export const previewProxyHandler = (req, res, next) => {
-  const projectId = req.params.projectId || req.params.id;
+  let projectId = req.params.projectId || req.params.id;
+
+  // If not in params, extract from referer header (for assets like /@vite/client or /src/main.jsx)
+  if (!projectId && req.headers.referer) {
+    const match = req.headers.referer.match(/\/preview\/([a-zA-Z0-9_-]+)/);
+    if (match) {
+      projectId = match[1];
+    }
+  }
+
+  // Ensure trailing slash on root preview URL so relative paths in iframe resolve correctly
+  if (projectId && req.originalUrl && req.originalUrl.split("?")[0] === `/preview/${projectId}`) {
+    const query = req.originalUrl.includes("?") ? req.originalUrl.slice(req.originalUrl.indexOf("?")) : "";
+    return res.redirect(301, `/preview/${projectId}/${query}`);
+  }
+
   const port = getActiveProjectPort(projectId) || getProjectPort(projectId);
 
   // Set frame options to allow iframe embedding from IDE frontend

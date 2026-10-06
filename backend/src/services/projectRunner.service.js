@@ -133,7 +133,7 @@ const validateTerminalCommand = (command) => {
  * directory. Commands are deliberately bounded in duration and output so a
  * browser request cannot leave an unbounded host process behind.
  */
-export const runProjectTerminalCommand = async (projectId, command) => {
+export const runProjectTerminalCommand = async (projectId, command, io = null) => {
   const safeCommand = validateTerminalCommand(command);
   const projectDir = await syncProjectFilesToDisk(projectId);
   const project = await Project.findById(projectId).select("projectType");
@@ -141,7 +141,9 @@ export const runProjectTerminalCommand = async (projectId, command) => {
   if (project?.projectType === "react-vite") {
     const args = safeCommand.split(/\s+/);
     try {
-      return await runReactSandboxCommand(projectId, args, { installIfMissing: true });
+      const res = await runReactSandboxCommand(projectId, args, { installIfMissing: true });
+      if (io && res.output) appendAndBroadcastLog(projectId, res.output, io);
+      return res;
     } catch (error) {
       logger.info(`Docker unavailable for terminal command on project ${projectId} (${error.message}). Falling back to native execution.`);
     }
@@ -183,8 +185,14 @@ export const runProjectTerminalCommand = async (projectId, command) => {
       }
     }, TERMINAL_COMMAND_TIMEOUT_MS);
 
-    child.stdout.on("data", appendOutput);
-    child.stderr.on("data", appendOutput);
+    child.stdout.on("data", (chunk) => {
+      appendOutput(chunk);
+      if (io) appendAndBroadcastLog(projectId, chunk.toString(), io);
+    });
+    child.stderr.on("data", (chunk) => {
+      appendOutput(chunk);
+      if (io) appendAndBroadcastLog(projectId, chunk.toString(), io);
+    });
     child.on("error", (error) => {
       if (settled) return;
       settled = true;
@@ -321,7 +329,7 @@ const appendAndBroadcastLog = (projectId, logLine, io = null) => {
  */
 const formatPreviewUrl = (projectId, port) => {
   if (!port || !projectId) return null;
-  return `/preview/${projectId}`;
+  return `/preview/${projectId}/`;
 };
 
 const updateServerStatus = async (projectId, status, port = null, io = null, containerId = null) => {
@@ -343,7 +351,7 @@ const updateServerStatus = async (projectId, status, port = null, io = null, con
       projectId,
       status,
       port,
-      previewUrl: formatPreviewUrl(port),
+      previewUrl: formatPreviewUrl(projectId, port),
     });
   }
 };
@@ -451,8 +459,9 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
   if (startingServer?.status === "starting") {
     return {
       status: "starting",
+      projectId,
       port: startingServer.port,
-      previewUrl: formatPreviewUrl(startingServer.port),
+      previewUrl: formatPreviewUrl(projectId, startingServer.port),
     };
   }
 
@@ -461,8 +470,9 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
     const existing = activeServers.get(projectId);
     return {
       status: targetStatus,
+      projectId,
       port: existing.port,
-      previewUrl: formatPreviewUrl(existing.port),
+      previewUrl: formatPreviewUrl(projectId, existing.port),
     };
   }
 
@@ -507,10 +517,11 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
         serverRecord.status = "running";
       }
       await updateServerStatus(projectId, targetStatus, allocatedPort, io, sandbox.containerId);
-      appendAndBroadcastLog(projectId, `[PREVIEW] /preview/${projectId}`, io);
+      appendAndBroadcastLog(projectId, `[PREVIEW] /preview/${projectId}/`, io);
       appendAndBroadcastLog(projectId, `[PROJECT] Status: ${targetStatus}`, io);
       return {
         status: targetStatus,
+        projectId,
         port: allocatedPort,
         previewUrl: formatPreviewUrl(projectId, allocatedPort),
       };
@@ -565,6 +576,8 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
     finalCmd = `${startCmd} -- -p ${allocatedPort}`;
   }
 
+  appendAndBroadcastLog(projectId, `[INFO] Node: ${process.version}`, io);
+  appendAndBroadcastLog(projectId, `[INFO] Working Directory: ${projectDir}`, io);
   appendAndBroadcastLog(projectId, `[EXECUTOR] Command: ${finalCmd}`, io);
 
   const shellCmd = isWin ? "cmd.exe" : "sh";
@@ -625,17 +638,24 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
   const isPortReady = await waitForPortOpen(allocatedPort, 15000);
   if (isPortReady) {
     await updateServerStatus(projectId, targetStatus, allocatedPort, io);
-    appendAndBroadcastLog(projectId, `[PREVIEW] /preview/${projectId}`, io);
+    appendAndBroadcastLog(projectId, `[PREVIEW] /preview/${projectId}/`, io);
     appendAndBroadcastLog(projectId, `[PROJECT] Status: ${targetStatus}`, io);
   } else {
-    logger.warn(`Dev server process for ${projectId} on port ${allocatedPort} started, but TCP port check timed out.`);
-    await updateServerStatus(projectId, targetStatus, allocatedPort, io);
-    appendAndBroadcastLog(projectId, `[PREVIEW] /preview/${projectId}`, io);
-    appendAndBroadcastLog(projectId, `[PROJECT] Status: ${targetStatus}`, io);
+    const isExited = child.exitCode !== null;
+    const errorMsg = isExited
+      ? `Server process exited prematurely with exit code ${child.exitCode}. Review terminal logs for details.`
+      : `Dev server on port ${allocatedPort} did not become ready within 15s timeout.`;
+    logger.error(`[EXECUTOR] ${errorMsg} for project ${projectId}`);
+    appendAndBroadcastLog(projectId, `❌ [EXECUTOR] ${errorMsg}`, io);
+    await updateServerStatus(projectId, "error", null, io);
+    releaseProjectPort(projectId);
+    activeServers.delete(projectId);
+    throw new Error(errorMsg);
   }
 
   return {
     status: targetStatus,
+    projectId,
     port: allocatedPort,
     previewUrl: formatPreviewUrl(projectId, allocatedPort),
   };
@@ -693,7 +713,7 @@ export const getDevServerStatus = async (projectId) => {
   return {
     serverStatus: status,
     devServerPort: port,
-    previewUrl: formatPreviewUrl(port),
+    previewUrl: formatPreviewUrl(projectId, port),
     projectType: project?.projectType || "general",
     startCommand: project?.startCommand || "",
     installCommand: project?.installCommand || "",

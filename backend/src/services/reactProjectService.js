@@ -57,8 +57,8 @@ export const getReactTemplateFiles = (projectName) => ({
         preview: "vite preview --host 0.0.0.0",
       },
       dependencies: {
-        react: "^19.0.0",
-        "react-dom": "^19.0.0",
+        react: "^18.3.1",
+        "react-dom": "^18.3.1",
       },
       devDependencies: {
         "@vitejs/plugin-react": "^4.3.4",
@@ -398,7 +398,11 @@ export const buildReactProject = async (projectId, io = null) => {
       error.statusCode = 400;
       throw error;
     }
-    const result = await runProjectTerminalCommand(projectId, "npm run build");
+    const result = await runProjectTerminalCommand(projectId, "npm run build", io);
+    if (result.output) {
+      // Ensure final output lines are visible in terminal
+      appendAndBroadcastLog(projectId, result.output, io);
+    }
     const status = result.exitCode === 0 ? "ready" : "error";
     await Project.findByIdAndUpdate(projectId, { serverStatus: status });
 
@@ -407,6 +411,14 @@ export const buildReactProject = async (projectId, io = null) => {
         projectId,
         status,
       });
+    }
+
+    if (result.exitCode !== 0) {
+      const buildErrorMsg = `Build failed with exit code ${result.exitCode}. Review terminal logs for details.`;
+      appendAndBroadcastLog(projectId, `❌ [BUILD] ${buildErrorMsg}`, io);
+      const err = new Error(buildErrorMsg);
+      err.statusCode = 400;
+      throw err;
     }
 
     // Sync generated dist directory into FileNodes

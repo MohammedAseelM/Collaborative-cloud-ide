@@ -51,12 +51,11 @@ export default function LivePreviewPanel({
   const backendBase = apiBase.replace(/\/api\/?$/, "");
 
   let activeUrl = "";
-  if (previewUrl) {
-    activeUrl = previewUrl.startsWith("http") ? previewUrl : `${backendBase}${previewUrl}`;
-  } else if (projectId) {
-    activeUrl = `${backendBase}/preview/${projectId}`;
-  } else if (port) {
-    activeUrl = `http://localhost:${port}`;
+  if (projectId) {
+    activeUrl = `${backendBase}/preview/${projectId}/`;
+  } else if (previewUrl) {
+    const raw = previewUrl.startsWith("http") ? previewUrl : `${backendBase}${previewUrl}`;
+    activeUrl = raw.endsWith("/") ? raw : `${raw}/`;
   }
 
   return (
@@ -164,7 +163,7 @@ export default function LivePreviewPanel({
 
       {/* Main Preview Frame Canvas */}
       <div className="flex-1 bg-slate-950 flex items-center justify-center p-2 overflow-auto min-h-0">
-        {serverStatus === "running" && (activeUrl || previewHtml) ? (
+        {(serverStatus === "running" || serverStatus === "previewing") && (activeUrl || previewHtml) ? (
           <div
             className={`h-full bg-white rounded-xl shadow-2xl overflow-hidden transition-all duration-300 ${
               viewportMode === "mobile"

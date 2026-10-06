@@ -72,6 +72,19 @@ app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev", { stream: mor
 // Reverse-proxy route for live preview iframe
 app.use("/preview/:projectId", previewProxyHandler);
 
+// Reverse-proxy for preview sub-resources (e.g. /@vite/client, /src/main.jsx) requested by preview iframe
+app.use((req, res, next) => {
+  if (
+    req.headers.referer &&
+    /\/preview\/[a-zA-Z0-9_-]+/.test(req.headers.referer) &&
+    !req.path.startsWith("/api") &&
+    req.path !== "/"
+  ) {
+    return previewProxyHandler(req, res, next);
+  }
+  next();
+});
+
 // Simple root route to confirm the API is reachable
 app.get("/", (req, res) => {
   res.status(200).json({
