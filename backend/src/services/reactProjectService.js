@@ -21,6 +21,7 @@ import {
   stopDevServer,
   runProjectTerminalCommand,
   getDevServerStatus,
+  appendAndBroadcastLog,
 } from "./projectRunner.service.js";
 import { destroyReactSandbox } from "./sandboxService.js";
 import { syncDiskToDatabase } from "./workspaceSync.service.js";

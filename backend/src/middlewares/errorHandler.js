@@ -7,13 +7,16 @@ const errorHandler = (err, req, res, next) => {
   const statusCode = err.statusCode && err.statusCode !== 200 ? err.statusCode : 500;
 
   console.error(`[Error] ${req.method} ${req.originalUrl} -> ${err.message}`);
+  if (err.stack) {
+    console.error(err.stack);
+  }
 
   res.status(statusCode).json({
     success: false,
-    message: err.expose || statusCode < 500
-      ? err.message || "Request failed"
-      : "An unexpected server error occurred.",
+    message: err.message || "An unexpected server error occurred.",
+    error: err.message || "An unexpected server error occurred.",
     errorCode: err.errorCode || (statusCode >= 500 ? "INTERNAL_SERVER_ERROR" : "REQUEST_FAILED"),
+    ...(process.env.NODE_ENV !== "production" ? { stack: err.stack } : {}),
   });
 };
 

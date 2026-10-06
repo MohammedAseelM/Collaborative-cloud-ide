@@ -308,7 +308,7 @@ export const syncProjectFilesToDisk = async (projectId) => {
 /**
  * Appends a terminal log line and broadcasts it over Socket.IO room.
  */
-const appendAndBroadcastLog = (projectId, logLine, io = null) => {
+export const appendAndBroadcastLog = (projectId, logLine, io = null) => {
   const server = activeServers.get(projectId);
   if (server) {
     server.logs.push(logLine);
