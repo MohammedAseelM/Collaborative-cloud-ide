@@ -382,8 +382,9 @@ export const installDependencies = async (projectId, io = null) => {
     }
   }
 
-  // Skip if node_modules already exists
-  if (fs.existsSync(nodeModulesPath) && installCmd.includes("npm")) {
+  // Skip if node_modules already exists and contains installed binaries (.bin)
+  const binPath = path.join(nodeModulesPath, ".bin");
+  if (fs.existsSync(nodeModulesPath) && fs.existsSync(binPath) && installCmd.includes("npm")) {
     appendAndBroadcastLog(projectId, "✔ Dependencies already installed (node_modules present).", io);
     return true;
   }

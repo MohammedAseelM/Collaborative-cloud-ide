@@ -394,7 +394,12 @@ export const buildReactProject = async (projectId, io = null) => {
   }
 
   try {
-    await installDependencies(projectId, io);
+    const installed = await installDependencies(projectId, io);
+    if (!installed) {
+      const error = new Error("Failed to install dependencies prior to build.");
+      error.statusCode = 400;
+      throw error;
+    }
     const result = await runProjectTerminalCommand(projectId, "npm run build");
     const status = result.exitCode === 0 ? "ready" : "error";
     await Project.findByIdAndUpdate(projectId, { serverStatus: status });
