@@ -15,6 +15,7 @@ import logger from "../utils/logger.js";
 import { releaseProjectEditLock } from "./projectEditLock.service.js";
 import { runReactSandboxCommand, startReactSandbox, stopReactSandbox } from "./sandboxService.js";
 import { resolveProjectPath } from "../utils/projectPath.js";
+import { allocatePortForProject, releaseProjectPort } from "./portManager.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,6 +28,12 @@ if (!fs.existsSync(tempRoot)) {
 // In-Memory registry of active running dev servers:
 // projectId -> { process, port, status, logs: Array<string>, projectDir: string }
 const activeServers = new Map();
+
+export const getActiveProjectPort = (projectId) => {
+  if (!projectId) return null;
+  const server = activeServers.get(projectId.toString());
+  return server ? server.port : null;
+};
 
 const getWorkspaceFilePath = async (file) => {
   const project = await Project.findById(file.project).select("owner");
@@ -312,17 +319,16 @@ const appendAndBroadcastLog = (projectId, logLine, io = null) => {
 /**
  * Updates project status in MongoDB & broadcasts to Socket room.
  */
-const formatPreviewUrl = (port) => {
-  if (!port) return null;
-  const host = process.env.PUBLIC_HOST || "http://localhost";
-  return `${host}:${port}`;
+const formatPreviewUrl = (projectId, port) => {
+  if (!port || !projectId) return null;
+  return `/preview/${projectId}`;
 };
 
 const updateServerStatus = async (projectId, status, port = null, io = null, containerId = null) => {
   await Project.findByIdAndUpdate(projectId, {
     serverStatus: status,
     devServerPort: port,
-    previewUrl: formatPreviewUrl(port),
+    previewUrl: formatPreviewUrl(projectId, port),
     containerId,
   });
 
@@ -467,8 +473,11 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
   let startCmd = isPreview ? "npm run preview" : (project.startCommand || projectInfo.startCommand || "npm run dev");
   const preferredPort = projectInfo.defaultPort || 5173;
 
-  // Allocate open port
-  const allocatedPort = await findAvailablePort(preferredPort);
+  // Allocate open port using portManager
+  const allocatedPort = await allocatePortForProject(projectId, preferredPort);
+
+  appendAndBroadcastLog(projectId, `[PROJECT] Starting project ${projectId}`, io);
+  appendAndBroadcastLog(projectId, `[PORT] Allocated ${allocatedPort}`, io);
 
   if (project?.projectType === "react-vite") {
     await syncProjectFilesToDisk(projectId);
@@ -481,12 +490,13 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
       sandbox: true,
     });
     await updateServerStatus(projectId, "starting", allocatedPort, io);
-    appendAndBroadcastLog(projectId, `🚀 Starting React ${isPreview ? "preview" : "development"} server in Docker on port ${allocatedPort}...`, io);
+    appendAndBroadcastLog(projectId, `[DOCKER] Starting React ${isPreview ? "preview" : "development"} server in Docker on port ${allocatedPort}...`, io);
     try {
       const sandbox = await startReactSandbox(projectId, allocatedPort, isPreview ? "preview" : "dev", {
         onLog: (line) => appendAndBroadcastLog(projectId, line, io),
         onExit: () => {
           updateServerStatus(projectId, "stopped", null, io);
+          releaseProjectPort(projectId);
           activeServers.delete(projectId);
           releaseProjectEditLock(projectId, null, io);
         },
@@ -497,15 +507,17 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
         serverRecord.status = "running";
       }
       await updateServerStatus(projectId, targetStatus, allocatedPort, io, sandbox.containerId);
+      appendAndBroadcastLog(projectId, `[PREVIEW] /preview/${projectId}`, io);
+      appendAndBroadcastLog(projectId, `[PROJECT] Status: ${targetStatus}`, io);
       return {
         status: targetStatus,
         port: allocatedPort,
-        previewUrl: formatPreviewUrl(allocatedPort),
+        previewUrl: formatPreviewUrl(projectId, allocatedPort),
       };
     } catch (error) {
       activeServers.delete(projectId);
       logger.info(`Docker sandbox start failed for project ${projectId} (${error.message}). Falling back to native process mode.`);
-      appendAndBroadcastLog(projectId, "⚠️ Docker sandbox unavailable. Falling back to native process mode...", io);
+      appendAndBroadcastLog(projectId, `[DOCKER] Docker unavailable (${error.message}). Falling back to native execution mode...`, io);
     }
   }
 
@@ -527,7 +539,7 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
   }
 
   await updateServerStatus(projectId, "starting", allocatedPort, io);
-  appendAndBroadcastLog(projectId, `🚀 Starting ${isPreview ? "preview" : "dev"} server on port ${allocatedPort} (${startCmd})...`, io);
+  appendAndBroadcastLog(projectId, `[EXECUTOR] Starting ${isPreview ? "preview" : "dev"} server on port ${allocatedPort}...`, io);
 
   // Inject PORT environment variable for dev server
   const isWin = process.platform === "win32";
@@ -552,6 +564,8 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
   } else if (finalCmd.includes("next")) {
     finalCmd = `${startCmd} -- -p ${allocatedPort}`;
   }
+
+  appendAndBroadcastLog(projectId, `[EXECUTOR] Command: ${finalCmd}`, io);
 
   const shellCmd = isWin ? "cmd.exe" : "sh";
   const args = isWin ? ["/c", finalCmd] : ["-c", finalCmd];
@@ -592,15 +606,17 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
   });
 
   child.on("exit", (code) => {
-    appendAndBroadcastLog(projectId, `ℹ Server exited with code ${code}`, io);
+    appendAndBroadcastLog(projectId, `[PROJECT] Server exited with code ${code}`, io);
     updateServerStatus(projectId, "stopped", null, io);
+    releaseProjectPort(projectId);
     activeServers.delete(projectId);
     releaseProjectEditLock(projectId, null, io);
   });
 
   child.on("error", (err) => {
-    appendAndBroadcastLog(projectId, `❌ Server error: ${err.message}`, io);
+    appendAndBroadcastLog(projectId, `[EXECUTOR] Server error: ${err.message}`, io);
     updateServerStatus(projectId, "error", null, io);
+    releaseProjectPort(projectId);
     activeServers.delete(projectId);
     releaseProjectEditLock(projectId, null, io);
   });
@@ -609,15 +625,19 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
   const isPortReady = await waitForPortOpen(allocatedPort, 15000);
   if (isPortReady) {
     await updateServerStatus(projectId, targetStatus, allocatedPort, io);
+    appendAndBroadcastLog(projectId, `[PREVIEW] /preview/${projectId}`, io);
+    appendAndBroadcastLog(projectId, `[PROJECT] Status: ${targetStatus}`, io);
   } else {
     logger.warn(`Dev server process for ${projectId} on port ${allocatedPort} started, but TCP port check timed out.`);
     await updateServerStatus(projectId, targetStatus, allocatedPort, io);
+    appendAndBroadcastLog(projectId, `[PREVIEW] /preview/${projectId}`, io);
+    appendAndBroadcastLog(projectId, `[PROJECT] Status: ${targetStatus}`, io);
   }
 
   return {
     status: targetStatus,
     port: allocatedPort,
-    previewUrl: formatPreviewUrl(allocatedPort),
+    previewUrl: formatPreviewUrl(projectId, allocatedPort),
   };
 };
 
@@ -649,6 +669,8 @@ export const stopDevServer = async (projectId, io = null) => {
       logger.warn(`Failed to kill process: ${err.message}`);
     }
   }
+
+  releaseProjectPort(projectId);
 
   activeServers.delete(projectId);
   await updateServerStatus(projectId, "stopped", null, io);

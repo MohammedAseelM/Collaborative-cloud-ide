@@ -11,6 +11,7 @@ import { env } from "./config/env.js";
 import routes from "./routes/index.js";
 import notFound from "./middlewares/notFound.js";
 import errorHandler from "./middlewares/errorHandler.js";
+import { previewProxyHandler } from "./middlewares/previewProxy.middleware.js";
 import logger from "./utils/logger.js";
 
 const app = express();
@@ -67,6 +68,9 @@ const morganStream = {
 app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev", { stream: morganStream }));
 
 // ---------- Routes ----------
+
+// Reverse-proxy route for live preview iframe
+app.use("/preview/:projectId", previewProxyHandler);
 
 // Simple root route to confirm the API is reachable
 app.get("/", (req, res) => {

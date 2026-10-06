@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 
 export default function LivePreviewPanel({
+  projectId = null,
   previewUrl,
   serverStatus = "stopped", // "stopped" | "installing" | "starting" | "running" | "error"
   port = null,
@@ -46,7 +47,17 @@ export default function LivePreviewPanel({
     if (activeUrl) window.open(activeUrl, "_blank", "noopener,noreferrer");
   };
 
-  const activeUrl = previewUrl || (port ? `http://localhost:${port}` : "");
+  const apiBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
+  const backendBase = apiBase.replace(/\/api\/?$/, "");
+
+  let activeUrl = "";
+  if (previewUrl) {
+    activeUrl = previewUrl.startsWith("http") ? previewUrl : `${backendBase}${previewUrl}`;
+  } else if (projectId) {
+    activeUrl = `${backendBase}/preview/${projectId}`;
+  } else if (port) {
+    activeUrl = `http://localhost:${port}`;
+  }
 
   return (
     <div className="flex flex-col h-full bg-slate-950 border-l border-slate-900 overflow-hidden select-none">
