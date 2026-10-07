@@ -8,6 +8,7 @@ import { Server } from "socket.io";
 import app from "./app.js";
 import connectDB from "./config/db.js";
 import { env } from "./config/env.js";
+import User from "./models/user.model.js";
 import { registerSocketHandlers } from "./sockets/projectSocket.js";
 import logger from "./utils/logger.js";
 
@@ -22,16 +23,44 @@ const startServer = async () => {
     // 1. Connect to MongoDB before accepting traffic
     await connectDB();
 
+    // Ensure Demo Developer account exists for instant testing
+    try {
+      const demoExists = await User.findOne({ email: "developer@ide.local" });
+      if (!demoExists) {
+        await User.create({
+          name: "Demo Developer",
+          email: "developer@ide.local",
+          password: "password123",
+          role: "admin",
+        });
+        logger.info("Demo developer account created (developer@ide.local)");
+      }
+    } catch (seedErr) {
+      logger.warn(`Demo user seed skipped: ${seedErr.message}`);
+    }
+
     const allowedOrigins = (env.CLIENT_URL || "")
       .split(",")
       .map((url) => url.trim())
-      .concat(["http://localhost:5173", "http://localhost:3000", "http://localhost:80", "http://localhost"])
+      .concat([
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost:80",
+        "http://localhost",
+        "https://collaborative-cloud-ide.vercel.app",
+      ])
       .filter(Boolean);
 
     const io = new Server(server, {
       cors: {
         origin: (origin, callback) => {
-          if (!origin || allowedOrigins.includes(origin) || origin.endsWith(".vercel.app")) {
+          if (
+            !origin ||
+            allowedOrigins.includes(origin) ||
+            origin.endsWith(".vercel.app") ||
+            /^http:\/\/localhost(:\d+)?$/.test(origin) ||
+            /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)
+          ) {
             return callback(null, true);
           }
           return callback(null, true);

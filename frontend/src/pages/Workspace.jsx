@@ -66,6 +66,7 @@ import PresenceList from "../components/PresenceList";
 import CollaboratorProfileModal from "../components/CollaboratorProfileModal";
 import ThemeToggle from "../components/ThemeToggle";
 import ReactCommandToolbar from "../components/ReactCommandToolbar";
+import { getSocketUrl } from "../config/env.js";
 
 const getExecutionLanguage = (filename) => {
   if (!filename) return null;
@@ -487,14 +488,7 @@ const Workspace = () => {
   useEffect(() => {
     if (isLoadingProject || !project) return;
 
-    const defaultDevUrl = `http://${window.location.hostname}:5000`;
-    const socketUrl =
-      import.meta.env.VITE_SOCKET_URL ||
-      (import.meta.env.VITE_API_BASE_URL && import.meta.env.VITE_API_BASE_URL.startsWith("http")
-        ? import.meta.env.VITE_API_BASE_URL.replace(/\/api\/?$/, "")
-        : import.meta.env.MODE === "development"
-        ? defaultDevUrl
-        : window.location.origin);
+    const socketUrl = getSocketUrl();
 
     const socketInstance = io(socketUrl, {
       withCredentials: true,

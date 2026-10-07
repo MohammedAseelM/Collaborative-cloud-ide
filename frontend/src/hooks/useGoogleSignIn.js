@@ -63,7 +63,8 @@ export function useGoogleSignIn({ buttonId, onCredential, onError }) {
 
     setConfigured(true);
 
-    if (window.location.hostname === "127.0.0.1") {
+    const isIpAddress = /^(\d{1,3}\.){3}\d{1,3}$/.test(window.location.hostname);
+    if (isIpAddress) {
       const currentPort = window.location.port ? `:${window.location.port}` : "";
       window.location.replace(
         `http://localhost${currentPort}${window.location.pathname}${window.location.search}`

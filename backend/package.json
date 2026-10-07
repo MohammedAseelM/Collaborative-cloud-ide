@@ -9,6 +9,9 @@
     "dev": "nodemon src/server.js",
     "test": "node tests/run_all.js"
   },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "keywords": [
     "collaborative-ide",
     "nodejs",

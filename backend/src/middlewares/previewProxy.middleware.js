@@ -6,11 +6,13 @@ import { createProxyMiddleware } from "http-proxy-middleware";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env.js";
 import Project from "../models/project.model.js";
-import { getProjectPort } from "../services/portManager.js";
+import { getProjectPort, isPortAvailable } from "../services/portManager.js";
 import { getActiveProjectPort } from "../services/projectRunner.service.js";
 import logger from "../utils/logger.js";
 
 const proxyInstances = new Map();
+
+let lastPreviewedProjectId = null;
 
 export const previewProxyHandler = async (req, res, next) => {
   let projectId = req.params.projectId || req.params.id;
@@ -23,9 +25,38 @@ export const previewProxyHandler = async (req, res, next) => {
     }
   }
 
+  // If still not identified, check cookie
+  if (!projectId && req.cookies?.preview_project_id) {
+    projectId = req.cookies.preview_project_id;
+  }
+
+  // If still not identified, fallback to last previewed project
+  if (!projectId && lastPreviewedProjectId) {
+    projectId = lastPreviewedProjectId;
+  }
+
+  // If still not identified, query database for active running project
+  if (!projectId) {
+    try {
+      const runningProject = await Project.findOne({ serverStatus: "running", devServerPort: { $ne: null } }).select("_id devServerPort");
+      if (runningProject) {
+        projectId = runningProject._id.toString();
+      }
+    } catch {}
+  }
+
   // Validate projectId format to prevent directory traversal or malformed strings
   if (projectId && !/^[a-fA-F0-9]{24}$/.test(projectId) && !/^[a-zA-Z0-9_-]{1,64}$/.test(projectId)) {
     return res.status(400).send("Invalid project ID.");
+  }
+
+  if (projectId) {
+    lastPreviewedProjectId = projectId.toString();
+    res.cookie("preview_project_id", projectId.toString(), {
+      path: "/",
+      sameSite: "lax",
+      httpOnly: false,
+    });
   }
 
   // Ensure trailing slash on root preview URL so relative paths in iframe resolve correctly
@@ -52,10 +83,33 @@ export const previewProxyHandler = async (req, res, next) => {
     }
   }
 
-  const port = getActiveProjectPort(projectId) || getProjectPort(projectId);
+  let port = getActiveProjectPort(projectId) || getProjectPort(projectId);
+  if (!port && projectId && /^[a-fA-F0-9]{24}$/.test(projectId)) {
+    try {
+      const dbProject = await Project.findById(projectId).select("devServerPort serverStatus");
+      if (dbProject?.devServerPort) {
+        port = dbProject.devServerPort;
+      }
+    } catch (err) {
+      logger.warn(`[PREVIEW] Could not query project port from DB: ${err.message}`);
+    }
+  }
+
+  if (!port) {
+    try {
+      const is5173Bound = !(await isPortAvailable(5173));
+      if (is5173Bound) {
+        port = 5173;
+      }
+    } catch {}
+  }
 
   // Set frame options to allow iframe embedding from IDE frontend
   res.removeHeader("X-Frame-Options");
+  res.removeHeader("Content-Security-Policy");
+  res.removeHeader("Cross-Origin-Resource-Policy");
+  res.removeHeader("Cross-Origin-Opener-Policy");
+  res.removeHeader("Referrer-Policy");
   res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
   res.setHeader("Access-Control-Allow-Credentials", "true");
 
@@ -141,6 +195,8 @@ export const previewProxyHandler = async (req, res, next) => {
       onProxyRes: (proxyRes) => {
         delete proxyRes.headers["x-frame-options"];
         delete proxyRes.headers["content-security-policy"];
+        delete proxyRes.headers["cross-origin-resource-policy"];
+        delete proxyRes.headers["cross-origin-opener-policy"];
       },
     });
     proxyInstances.set(port, proxy);

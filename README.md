@@ -342,14 +342,15 @@ cd Collaborative-cloud-ide
 ```ini
 PORT=5000
 NODE_ENV=development
-MONGO_URI=mongodb://localhost:27017/collaborative-cloud-ide
+MONGO_URI=mongodb://127.0.0.1:27017/collaborative-cloud-ide
 JWT_SECRET=your_super_secret_jwt_key_at_least_32_characters_long
-CLIENT_URL=http://localhost:5173
+CLIENT_URL=http://localhost:3000,http://localhost:5173
 ```
 
 ### Frontend (`frontend/.env`)
 ```ini
 VITE_API_URL=http://localhost:5000/api
+VITE_API_BASE_URL=http://localhost:5000/api
 VITE_SOCKET_URL=http://localhost:5000
 ```
 
@@ -379,7 +380,7 @@ cd frontend
 npm install
 npm run dev
 ```
-Frontend will be available at `http://localhost:5173`.
+Frontend will be available at `http://localhost:3000`.
 
 ---
 

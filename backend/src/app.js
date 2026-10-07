@@ -16,7 +16,16 @@ import logger from "./utils/logger.js";
 
 const app = express();
 
-app.use(helmet());
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: false,
+    crossOriginOpenerPolicy: false,
+    frameguard: false,
+    referrerPolicy: false,
+  })
+);
 
 app.use(compression());
 
@@ -36,13 +45,25 @@ app.use("/api", apiLimiter);
 const allowedOrigins = (env.CLIENT_URL || "")
   .split(",")
   .map((url) => url.trim())
-  .concat(["http://localhost:5173", "http://localhost:3000", "http://localhost:80", "http://localhost"])
+  .concat([
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://localhost:80",
+    "http://localhost",
+    "https://collaborative-cloud-ide.vercel.app",
+  ])
   .filter(Boolean);
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin) || origin.endsWith(".vercel.app")) {
+      if (
+        !origin ||
+        allowedOrigins.includes(origin) ||
+        origin.endsWith(".vercel.app") ||
+        /^http:\/\/localhost(:\d+)?$/.test(origin) ||
+        /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)
+      ) {
         return callback(null, true);
       }
       return callback(null, true);
@@ -72,14 +93,25 @@ app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev", { stream: mor
 // Reverse-proxy route for live preview iframe
 app.use("/preview/:projectId", previewProxyHandler);
 
-// Reverse-proxy for preview sub-resources (e.g. /@vite/client, /src/main.jsx) requested by preview iframe
+// Reverse-proxy for preview sub-resources (e.g. /@vite/client, /src/main.jsx, /node_modules/*, /@react-refresh)
 app.use((req, res, next) => {
-  if (
-    req.headers.referer &&
-    /\/preview\/[a-zA-Z0-9_-]+/.test(req.headers.referer) &&
-    !req.path.startsWith("/api") &&
-    req.path !== "/"
-  ) {
+  if (req.path.startsWith("/api") || req.path === "/") {
+    return next();
+  }
+
+  const referer = req.headers.referer || "";
+  const isFromPreview =
+    /\/preview\/[a-zA-Z0-9_-]+/.test(referer) ||
+    referer.includes("localhost:5000") ||
+    referer.includes("127.0.0.1:5000") ||
+    Boolean(req.cookies?.preview_project_id) ||
+    req.path.startsWith("/@") ||
+    req.path.startsWith("/src/") ||
+    req.path.startsWith("/node_modules/") ||
+    req.path.startsWith("/public/") ||
+    /\.(jsx?|tsx?|vue|svelte|css|json|mjs|svg|png|jpg|ico|woff2?)$/i.test(req.path);
+
+  if (isFromPreview) {
     return previewProxyHandler(req, res, next);
   }
   next();

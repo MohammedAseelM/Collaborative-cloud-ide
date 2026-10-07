@@ -38,6 +38,21 @@ const Login = () => {
     },
   });
 
+  const handleDemoLogin = async () => {
+    setFormError("");
+    setFieldErrors({});
+    setIsSubmitting(true);
+    try {
+      await login({ email: "developer@ide.local", password: "password123" });
+      addToast("Logged in as Demo Developer", "success");
+      navigate("/dashboard");
+    } catch (error) {
+      setFormError(error?.response?.data?.message || "Demo login failed");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleChange = (e) => {
     setFormData((prev) => ({ ...prev, [e.target.name]: e.target.value }));
   };
@@ -143,6 +158,16 @@ const Login = () => {
             className="w-full rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-medium py-2 transition-colors cursor-pointer"
           >
             {isSubmitting ? "Logging in..." : "Log in"}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleDemoLogin}
+            disabled={isSubmitting}
+            className="w-full rounded-md bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 font-medium py-2 transition-colors cursor-pointer text-sm flex items-center justify-center gap-2"
+          >
+            <span>⚡ Instant Demo Login</span>
+            <span className="text-xs text-emerald-400/80">(Bypass Auth)</span>
           </button>
         </form>
 

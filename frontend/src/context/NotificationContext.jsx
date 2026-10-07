@@ -12,6 +12,7 @@ import {
   markAllNotificationsRead,
 } from "../services/notification.service";
 import { fetchUserInvitations } from "../services/invitation.service";
+import { getSocketUrl } from "../config/env.js";
 
 const NotificationContext = createContext(null);
 
@@ -76,14 +77,7 @@ export const NotificationProvider = ({ children }) => {
       return undefined;
     }
 
-    const defaultDevUrl = `http://${window.location.hostname}:5000`;
-    const socketUrl =
-      import.meta.env.VITE_SOCKET_URL ||
-      (import.meta.env.VITE_API_BASE_URL && import.meta.env.VITE_API_BASE_URL.startsWith("http")
-        ? import.meta.env.VITE_API_BASE_URL.replace(/\/api\/?$/, "")
-        : import.meta.env.MODE === "development"
-        ? defaultDevUrl
-        : window.location.origin);
+    const socketUrl = getSocketUrl();
 
     const s = io(socketUrl, {
       withCredentials: true,

@@ -17,6 +17,7 @@ import {
   Globe,
   Layers,
 } from "lucide-react";
+import { getSocketUrl } from "../config/env.js";
 
 export default function LivePreviewPanel({
   projectId = null,
@@ -47,8 +48,7 @@ export default function LivePreviewPanel({
     if (activeUrl) window.open(activeUrl, "_blank", "noopener,noreferrer");
   };
 
-  const apiBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
-  const backendBase = apiBase.replace(/\/api\/?$/, "");
+  const backendBase = getSocketUrl();
 
   let activeUrl = "";
   if (projectId) {
