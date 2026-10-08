@@ -405,8 +405,15 @@ export const buildReactProject = async (projectId, io = null) => {
     const viteBin = path.join(projectDir, "node_modules", ".bin", isWin ? "vite.cmd" : "vite");
     const vitePkg = path.join(projectDir, "node_modules", "vite");
     if (!fs.existsSync(viteBin) && !fs.existsSync(vitePkg)) {
-      appendAndBroadcastLog(projectId, "⚙ Vite binary not detected in node_modules, ensuring clean install before build...", io);
-      await installDependencies(projectId, io);
+      appendAndBroadcastLog(projectId, "⚙ Vite binary not detected in node_modules, installing dependencies before build...", io);
+      const installed = await installDependencies(projectId, io);
+      if (!installed) {
+        const installErrorMsg = "Dependencies are not yet installed. Please click the 'Install' button and wait for npm install to finish before building.";
+        appendAndBroadcastLog(projectId, `❌ [BUILD] ${installErrorMsg}`, io);
+        const err = new Error(installErrorMsg);
+        err.statusCode = 400;
+        throw err;
+      }
     }
 
     const result = await runProjectTerminalCommand(projectId, "npm run build", io);
