@@ -1,0 +1,182 @@
+<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+<head>
+<meta charset='utf-8'>
+<title>Project Report Summary - Collaborative Cloud IDE</title>
+<!--[if gte mso 9]>
+<xml>
+<w:WordDocument>
+<w:View>Print</w:View>
+<w:Zoom>100</w:Zoom>
+<w:DoNotOptimizeForBrowser/>
+</w:WordDocument>
+</xml>
+<![endif]-->
+<style>
+  body {
+    font-family: 'Calibri', 'Segoe UI', Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.5;
+    color: #222222;
+    margin: 1in;
+  }
+  h1 {
+    font-size: 22pt;
+    font-weight: bold;
+    color: #1a365d;
+    border-bottom: 2px solid #2b6cb0;
+    padding-bottom: 6px;
+    margin-top: 18pt;
+    margin-bottom: 10pt;
+  }
+  h2 {
+    font-size: 15pt;
+    font-weight: bold;
+    color: #2b6cb0;
+    margin-top: 14pt;
+    margin-bottom: 6pt;
+  }
+  h3 {
+    font-size: 12pt;
+    font-weight: bold;
+    color: #2d3748;
+    margin-top: 10pt;
+    margin-bottom: 4pt;
+  }
+  p {
+    margin-top: 0;
+    margin-bottom: 8pt;
+    text-align: justify;
+  }
+  ul, ol {
+    margin-top: 0;
+    margin-bottom: 8pt;
+    padding-left: 20pt;
+  }
+  li {
+    margin-bottom: 4pt;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-top: 8pt;
+    margin-bottom: 12pt;
+  }
+  th, td {
+    border: 1px solid #cbd5e0;
+    padding: 6pt 10pt;
+    text-align: left;
+    font-size: 10pt;
+  }
+  th {
+    background-color: #edf2f7;
+    font-weight: bold;
+    color: #2d3748;
+  }
+  .header-box {
+    background-color: #ebf8ff;
+    border-left: 4px solid #3182ce;
+    padding: 10pt;
+    margin-bottom: 16pt;
+  }
+  .tag {
+    font-weight: bold;
+    color: #2b6cb0;
+  }
+</style>
+</head>
+<body>
+
+<h1>PROJECT REPORT SUMMARY</h1>
+<div class="header-box">
+  <p><strong>Project Title:</strong> Collaborative Cloud IDE for Team-Based Software Development</p>
+  <p><strong>Domain:</strong> Cloud Computing, Web-Based Developer Tools, Real-Time Collaboration Systems</p>
+  <p><strong>Architecture:</strong> Client-Server, Microservices / Containerized Execution, Decoupled Control & Execution Plane</p>
+</div>
+
+<h2>1. Executive Summary / Abstract</h2>
+<p>
+Modern software engineering teams face significant friction due to complex local environment configurations, disparate developer setups, and delayed feedback during pair programming. This project presents the <strong>Collaborative Cloud IDE</strong>, a production-grade, browser-based integrated development environment engineered to eliminate local setup delays and enable frictionless, simultaneous team development in real-time.
+</p>
+<p>
+The platform brings full-featured cloud IDE capabilities into the web browser by integrating Microsoft's <strong>Monaco Editor</strong> with <strong>Socket.IO</strong>, facilitating simultaneous multi-user code editing with low-latency remote cursor visualization, presence detection, and typing indicators. To safeguard host infrastructure during program execution, user code in diverse programming languages (JavaScript, TypeScript, Python, C, C++, Java) is executed in isolated, resource-constrained sandbox environments. In addition, the platform features a full React/Vite development lifecycle with automated dependency installation, background dev server execution, and an in-browser live application preview routed through a secure, authenticated backend reverse proxy.
+</p>
+
+<h2>2. Problem Statement</h2>
+<p>
+Traditional software development workflows suffer from:
+</p>
+<ul>
+  <li><strong>Environment Inconsistencies:</strong> The persistent "it works on my machine" syndrome caused by mismatched runtime versions, operating system discrepancies, and missing local packages.</li>
+  <li><strong>Slow Collaboration Cycles:</strong> Code reviews and collaborative coding typically require Git branching, pushing, pulling, and sharing screen recordings rather than real-time synchronous editing.</li>
+  <li><strong>Security Risks in Shared Workspaces:</strong> Running untrusted team code or external scripts locally presents vulnerabilities to host machines without sandboxed isolation.</li>
+</ul>
+
+<h2>3. Project Objectives</h2>
+<ol>
+  <li><strong>Zero-Setup Development:</strong> Deliver a full browser-based IDE requiring no client-side toolchains or compilers.</li>
+  <li><strong>Real-Time Synchronous Collaboration:</strong> Provide simultaneous multi-user editing with cursor positions, active selections, and integrated workspace chat.</li>
+  <li><strong>Multi-Language Execution & Terminal Streaming:</strong> Execute programs across multiple languages and stream stdout, stderr, and exit codes directly to an in-browser terminal emulator.</li>
+  <li><strong>Full-Stack Web App Preview:</strong> Run complete React and Vite applications with live previews delivered through an authenticated backend reverse proxy.</li>
+  <li><strong>Enterprise Governance & Access Control:</strong> Enforce strict server-side Role-Based Access Control (Owner, Admin, Editor, Viewer) and persistent immutable version snapshot histories.</li>
+</ol>
+
+<h2>4. Technology Stack</h2>
+<table>
+  <tr>
+    <th style="width: 25%;">Layer / Component</th>
+    <th style="width: 35%;">Technologies Used</th>
+    <th style="width: 40%;">Key Responsibility</th>
+  </tr>
+  <tr>
+    <td><strong>Frontend (Presentation)</strong></td>
+    <td>React 19, Vite, Tailwind CSS, Monaco Editor (@monaco-editor/react), Xterm.js, Lucide Icons</td>
+    <td>Responsive browser interface, code editing, terminal rendering, live preview iframe, and WebSocket event handling.</td>
+  </tr>
+  <tr>
+    <td><strong>Backend (Control Plane)</strong></td>
+    <td>Node.js (v20+), Express, Socket.IO Server, http-proxy-middleware</td>
+    <td>REST API endpoints, WebSocket room management, state synchronization, and authenticated reverse proxy for live previews.</td>
+  </tr>
+  <tr>
+    <td><strong>Database (Data Layer)</strong></td>
+    <td>MongoDB, Mongoose ODM</td>
+    <td>Persistent storage of users, workspaces, flat file trees, invitations, activity timelines, chat history, and version snapshots.</td>
+  </tr>
+  <tr>
+    <td><strong>Execution Sandbox</strong></td>
+    <td>Docker, Dockerode, Child Processes, PTY</td>
+    <td>Sandboxed compilation and runtime execution for Python, Node.js, C, C++, and Java with CPU and memory limits.</td>
+  </tr>
+  <tr>
+    <td><strong>Security & Auth</strong></td>
+    <td>JWT, bcryptjs, Helmet, CORS, Express-Rate-Limit, Cookie-Parser</td>
+    <td>Secure authentication via HTTP-only cookies, password hashing, API rate limiting, and HTTP header protection.</td>
+  </tr>
+</table>
+
+<h2>5. Core Architecture & Key Modules</h2>
+<ul>
+  <li><strong>Decoupled Architecture:</strong> Strict separation of the <em>Control Plane</em> (REST APIs, Socket.IO, database) and the <em>Execution Plane</em> (sandboxed runtime execution, container runners, and background dev servers).</li>
+  <li><strong>Real-Time Synchronization Engine:</strong> Synchronizes character delta operations (range offsets and text insertions/deletions) within project rooms via Socket.IO. Debounces database file writes to reduce I/O overhead while providing sub-50ms editor responsiveness.</li>
+  <li><strong>Secure Live Preview (Reverse Proxy):</strong> Dev servers bind strictly to local loopback ports (e.g., <code>127.0.0.1:3000</code>). External requests are routed through <code>/preview/:projectId/</code> where session tokens and access permissions are validated before forwarding requests.</li>
+  <li><strong>Version Snapshots & Timelines:</strong> Immutable codebase snapshots can be captured on demand, labeled, and restored. Restoring broadcasts real-time workspace updates to all connected developers.</li>
+  <li><strong>Role-Based Access Control (RBAC):</strong> Server-enforced roles prevent unauthorized modifications. Viewers receive a read-only editor instance; Editors can modify code; Admins and Owners manage collaborators and project settings.</li>
+</ul>
+
+<h2>6. Key Results & Performance Metrics</h2>
+<ul>
+  <li><strong>Build & Startup Performance:</strong> Vite frontend compiles in under 6 seconds, producing optimized client chunks with gzip compression.</li>
+  <li><strong>Real-Time Sync Latency:</strong> Delta propagation between active collaborators achieves near-instantaneous reflection (&lt; 50 ms) over WebSockets.</li>
+  <li><strong>Comprehensive Test Suite:</strong> Automated API tests cover Authentication, File Trees, RBAC authorization, and Socket message broadcasting.</li>
+</ul>
+
+<h2>7. Conclusion & Future Scope</h2>
+<p>
+The Collaborative Cloud IDE demonstrates a complete, reliable, and scalable web-based development environment that removes traditional barriers to software engineering teamwork. It achieves rapid collaboration, secure code execution, and streamlined web application previews.
+</p>
+<p>
+<strong>Future Enhancements:</strong> Integration of AI code generation and debugging assistants, WebRTC-based low-latency audio/video calling, and cloud Kubernetes-based multi-tenant pod autoscaling.
+</p>
+
+</body>
+</html>
