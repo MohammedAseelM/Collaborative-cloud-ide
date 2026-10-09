@@ -17,6 +17,7 @@ import logger from "../utils/logger.js";
 import {
   syncProjectFilesToDisk,
   installDependencies,
+  areDependenciesInstalled,
   startDevServer,
   stopDevServer,
   runProjectTerminalCommand,
@@ -384,6 +385,21 @@ export const buildReactProject = async (projectId, io = null) => {
     throw error;
   }
 
+  const projectDir = await syncProjectFilesToDisk(projectId);
+
+  // 1. Verify package.json exists
+  const pkgJsonPath = path.join(projectDir, "package.json");
+  if (!fs.existsSync(pkgJsonPath)) {
+    await syncProjectFilesToDisk(projectId);
+  }
+  if (!fs.existsSync(pkgJsonPath)) {
+    const errorMsg = "package.json not found in this project. Cannot build project.";
+    appendAndBroadcastLog(projectId, `❌ [BUILD] ${errorMsg}`, io);
+    const err = new Error(errorMsg);
+    err.statusCode = 400;
+    throw err;
+  }
+
   await Project.findByIdAndUpdate(projectId, { serverStatus: "building" });
   if (io) {
     io.to(`project:${projectId}`).emit("project-status-change", {
@@ -393,24 +409,14 @@ export const buildReactProject = async (projectId, io = null) => {
   }
 
   try {
-    const installed = await installDependencies(projectId, io);
-    if (!installed) {
-      const error = new Error("Failed to install dependencies prior to build.");
-      error.statusCode = 400;
-      throw error;
-    }
-
-    const projectDir = path.resolve(env.WORKSPACE_ROOT, project.owner.toString(), projectId.toString());
-    const isWin = process.platform === "win32";
-    const viteBin = path.join(projectDir, "node_modules", ".bin", isWin ? "vite.cmd" : "vite");
-    const vitePkg = path.join(projectDir, "node_modules", "vite");
-    if (!fs.existsSync(viteBin) && !fs.existsSync(vitePkg)) {
-      appendAndBroadcastLog(projectId, "⚙ Vite binary not detected in node_modules, installing dependencies before build...", io);
+    // 2. Check dependencies installed before attempting build
+    if (!areDependenciesInstalled(projectDir, project.projectType)) {
+      appendAndBroadcastLog(projectId, "⚙ Dependencies not detected. Installing dependencies before building...", io);
       const installed = await installDependencies(projectId, io);
-      if (!installed) {
-        const installErrorMsg = "Dependencies are not yet installed. Please click the 'Install' button and wait for npm install to finish before building.";
-        appendAndBroadcastLog(projectId, `❌ [BUILD] ${installErrorMsg}`, io);
-        const err = new Error(installErrorMsg);
+      if (!installed || !areDependenciesInstalled(projectDir, project.projectType)) {
+        const errorMsg = "Dependencies are not installed. Please click Install before building the project.";
+        appendAndBroadcastLog(projectId, `❌ [BUILD] ${errorMsg}`, io);
+        const err = new Error(errorMsg);
         err.statusCode = 400;
         throw err;
       }

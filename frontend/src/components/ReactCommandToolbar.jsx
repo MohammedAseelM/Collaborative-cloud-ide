@@ -83,16 +83,16 @@ export default function ReactCommandToolbar({
   const handleInstall = async () => {
     setActionLoading("install");
     try {
-      addToast("Starting dependency installation (npm install)...", "info");
+      addToast("⚙ Installing dependencies...", "info");
       const res = await installDependenciesRequest(projectId);
       if (res.success) {
-        addToast("Dependencies installed successfully!", "success");
+        addToast("✅ Dependencies installed successfully!", "success");
       } else {
-        addToast("Dependency installation failed.", "error");
+        addToast("❌ Dependency installation failed.", "error");
       }
       if (onRefreshFiles) onRefreshFiles();
     } catch (err) {
-      addToast(err.response?.data?.message || "Failed to install dependencies.", "error");
+      addToast(err.response?.data?.message || "❌ Dependency installation failed.", "error");
     } finally {
       setActionLoading(null);
     }

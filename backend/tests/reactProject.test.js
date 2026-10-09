@@ -11,6 +11,10 @@ import { clearDatabase, getAuthCookie } from "./test_helper.js";
 import User from "../src/models/user.model.js";
 import Project from "../src/models/project.model.js";
 import FileNode from "../src/models/file.model.js";
+import { areDependenciesInstalled, isInstallingDependencies } from "../src/services/projectRunner.service.js";
+import { env } from "../src/config/env.js";
+import path from "path";
+import fs from "fs";
 
 let server;
 let mongoServer;
@@ -263,5 +267,59 @@ test("React Project Command System Tests", async (t) => {
     const npmData = await npmRes.json();
     assert.strictEqual(npmData.success, true);
     assert.match(npmData.version, /^\d+/);
+  });
+
+  await t.test("areDependenciesInstalled correctly distinguishes package.json from actual node_modules binaries", async () => {
+    const createRes = await fetch(`${baseUrl}/projects/react/create`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: ownerCookie,
+      },
+      body: JSON.stringify({ name: "dep-check-app" }),
+    });
+    const { project } = await createRes.json();
+    const projectDir = path.resolve(env.WORKSPACE_ROOT, testOwner._id.toString(), project._id.toString());
+
+    // Initially, package.json exists on disk or in DB, but node_modules does NOT exist
+    assert.strictEqual(areDependenciesInstalled(projectDir, "react-vite"), false);
+
+    // If an empty node_modules folder is created, it must still report false (vite is missing)
+    const nodeModulesPath = path.join(projectDir, "node_modules");
+    fs.mkdirSync(nodeModulesPath, { recursive: true });
+    assert.strictEqual(areDependenciesInstalled(projectDir, "react-vite"), false);
+
+    // Clean up temporary test folder
+    try { fs.rmSync(projectDir, { recursive: true, force: true }); } catch {}
+  });
+
+  await t.test("POST /api/projects/:projectId/build should safely handle uninstalled dependencies without exit code 127 crash", async () => {
+    const createRes = await fetch(`${baseUrl}/projects/react/create`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: ownerCookie,
+      },
+      body: JSON.stringify({ name: "build-safe-app" }),
+    });
+    const { project } = await createRes.json();
+
+    const buildRes = await fetch(`${baseUrl}/projects/${project._id}/build`, {
+      method: "POST",
+      headers: { Cookie: ownerCookie },
+    });
+
+    const buildData = await buildRes.json();
+    // Must either succeed (if auto-install completes) or return a clean, structured 400 error
+    // It must NEVER return an unhandled exit code 127 crash!
+    if (!buildData.success) {
+      assert.ok(buildRes.status === 400 || buildRes.status === 500);
+      assert.ok(
+        buildData.message?.includes("Dependencies") ||
+        buildData.message?.includes("Install") ||
+        buildData.message?.includes("failed"),
+        `Expected clear error message, got: ${buildData.message}`
+      );
+    }
   });
 });

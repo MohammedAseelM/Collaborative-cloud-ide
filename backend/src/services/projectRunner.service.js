@@ -29,6 +29,72 @@ if (!fs.existsSync(tempRoot)) {
 // projectId -> { process, port, status, logs: Array<string>, projectDir: string }
 const activeServers = new Map();
 
+// In-Memory lock of active dependency installation processes:
+// projectId -> Promise<boolean>
+// Prevents concurrent duplicate npm install runs for the same project.
+const activeInstallations = new Map();
+
+export const isInstallingDependencies = (projectId) => {
+  if (!projectId) return false;
+  return activeInstallations.has(projectId.toString());
+};
+
+/**
+ * Accurately detects whether project dependencies are actually installed on disk.
+ * Distinguishes between package.json existing vs node_modules binaries actually present.
+ *
+ * @param {string} projectDir - Absolute path to project workspace directory
+ * @param {string} [projectType] - Project type (e.g. "react-vite", "react")
+ * @returns {boolean}
+ */
+export const areDependenciesInstalled = (projectDir, projectType = null) => {
+  if (!projectDir || !fs.existsSync(projectDir)) return false;
+
+  const pkgJsonPath = path.join(projectDir, "package.json");
+  if (!fs.existsSync(pkgJsonPath)) return false;
+
+  const nodeModulesPath = path.join(projectDir, "node_modules");
+  if (!fs.existsSync(nodeModulesPath)) return false;
+
+  const isWin = process.platform === "win32";
+  const binDir = path.join(nodeModulesPath, ".bin");
+
+  // Determine if project relies on Vite
+  let isVite = projectType === "react-vite" || projectType === "react";
+  if (!isVite) {
+    try {
+      const pkgContent = fs.readFileSync(pkgJsonPath, "utf-8");
+      const pkg = JSON.parse(pkgContent);
+      isVite = Boolean(
+        pkg.dependencies?.vite ||
+        pkg.devDependencies?.vite ||
+        pkg.scripts?.dev?.includes("vite") ||
+        pkg.scripts?.build?.includes("vite")
+      );
+    } catch {
+      // ignore JSON parse error
+    }
+  }
+
+  if (isVite) {
+    const viteBin = path.join(binDir, isWin ? "vite.cmd" : "vite");
+    const vitePkg = path.join(nodeModulesPath, "vite", "package.json");
+    const reactPkg = path.join(nodeModulesPath, "react", "package.json");
+    const hasVite = fs.existsSync(viteBin) || fs.existsSync(vitePkg);
+    const hasReact = fs.existsSync(reactPkg);
+    return hasVite && (hasReact || fs.existsSync(vitePkg));
+  }
+
+  // General Node.js projects: verify non-empty node_modules
+  try {
+    const entries = fs.readdirSync(nodeModulesPath);
+    const validEntries = entries.filter((e) => !e.startsWith("."));
+    return validEntries.length > 0;
+  } catch {
+    return false;
+  }
+};
+
 export const getActiveProjectPort = (projectId) => {
   if (!projectId) return null;
   const server = activeServers.get(projectId.toString());
@@ -163,6 +229,23 @@ export const runProjectTerminalCommand = async (projectId, command, io = null) =
   const safeCommand = validateTerminalCommand(command);
   const projectDir = await syncProjectFilesToDisk(projectId);
   const project = await Project.findById(projectId).select("projectType");
+
+  // If command requires build or dev tools (e.g. npm run build, vite), verify dependencies first
+  const isViteOrBuildCmd = /^npm\s+run\s+(build|dev|preview)/i.test(safeCommand) || /^vite\b/i.test(safeCommand);
+  if (isViteOrBuildCmd && !areDependenciesInstalled(projectDir, project?.projectType)) {
+    appendAndBroadcastLog(projectId, "⚙ Dependencies not detected. Installing dependencies before running command...", io);
+    const installed = await installDependencies(projectId, io);
+    if (!installed || !areDependenciesInstalled(projectDir, project?.projectType)) {
+      const errorMsg = "Dependencies are not installed. Please click Install or run 'npm install' first.";
+      appendAndBroadcastLog(projectId, `❌ [TERMINAL] ${errorMsg}`, io);
+      return {
+        exitCode: 1,
+        output: `\n${errorMsg}\n`,
+        timedOut: false,
+        truncated: false,
+      };
+    }
+  }
 
   if (project?.projectType === "react-vite") {
     const args = safeCommand.split(/\s+/);
@@ -399,110 +482,132 @@ const updateServerStatus = async (projectId, status, port = null, io = null, con
 
 /**
  * Installs project dependencies (e.g. npm install) if required.
+ * Guards against concurrent duplicate npm install runs per project.
  */
 export const installDependencies = async (projectId, io = null) => {
-  const projectDir = await syncProjectFilesToDisk(projectId);
-  const nodeModulesPath = path.join(projectDir, "node_modules");
+  const strId = projectId.toString();
 
-  const project = await Project.findById(projectId);
-  let installCmd = project?.installCommand || "npm install";
-  if (installCmd.startsWith("npm install") && !installCmd.includes("--legacy-peer-deps")) {
-    installCmd = `${installCmd} --legacy-peer-deps --no-audit --no-fund`;
+  // Prevent duplicate concurrent npm install processes for the same project
+  if (activeInstallations.has(strId)) {
+    appendAndBroadcastLog(projectId, "⚙ Dependency installation is already in progress. Waiting for completion...", io);
+    return activeInstallations.get(strId);
   }
 
-  if (!installCmd) {
-    return true; // No install command required
-  }
-
-  if (project?.projectType === "react-vite") {
-    await updateServerStatus(projectId, "installing", null, io);
-    appendAndBroadcastLog(projectId, "⚙ Installing dependencies in the Docker sandbox...", io);
+  const installPromise = (async () => {
     try {
-      const result = await runReactSandboxCommand(projectId, ["npm", "install", "--legacy-peer-deps", "--no-audit", "--no-fund"], {
-        timeoutMs: 300_000,
+      const project = await Project.findById(projectId);
+      if (!project) throw new Error("Project not found");
+
+      const projectDir = await syncProjectFilesToDisk(projectId);
+
+      // Verify package.json exists before attempting installation
+      const pkgJsonPath = path.join(projectDir, "package.json");
+      if (!fs.existsSync(pkgJsonPath)) {
+        await syncProjectFilesToDisk(projectId);
+      }
+      if (!fs.existsSync(pkgJsonPath)) {
+        const errorMsg = `package.json not found in this project (${projectDir}). Cannot install dependencies.`;
+        appendAndBroadcastLog(projectId, `❌ [INSTALL] ${errorMsg}`, io);
+        return false;
+      }
+
+      let installCmd = project?.installCommand || "npm install";
+      if (installCmd.startsWith("npm install") && !installCmd.includes("--legacy-peer-deps")) {
+        installCmd = `${installCmd} --legacy-peer-deps --no-audit --no-fund`;
+      }
+
+      if (!installCmd) {
+        return true;
+      }
+
+      // Skip if dependencies are already fully installed
+      if (areDependenciesInstalled(projectDir, project?.projectType)) {
+        appendAndBroadcastLog(projectId, "✔ Dependencies already installed (Vite found in node_modules).", io);
+        return true;
+      }
+
+      await updateServerStatus(projectId, "installing", null, io);
+
+      // Try Docker sandbox execution first if applicable
+      if (project?.projectType === "react-vite") {
+        appendAndBroadcastLog(projectId, "⚙ Installing dependencies in the Docker sandbox...", io);
+        try {
+          const result = await runReactSandboxCommand(projectId, ["npm", "install", "--legacy-peer-deps", "--no-audit", "--no-fund"], {
+            timeoutMs: 300_000,
+          });
+          if (result.output) appendAndBroadcastLog(projectId, result.output, io);
+          const installed = result.exitCode === 0;
+          if (installed) {
+            appendAndBroadcastLog(projectId, "✅ Dependencies installed successfully!", io);
+            await updateServerStatus(projectId, "ready", null, io);
+            return true;
+          } else {
+            appendAndBroadcastLog(projectId, `❌ Dependency installation failed (exit code ${result.exitCode}).`, io);
+            await updateServerStatus(projectId, "error", null, io);
+            return false;
+          }
+        } catch (error) {
+          if (error.errorCode !== "DOCKER_UNAVAILABLE") {
+            await updateServerStatus(projectId, "error", null, io);
+            throw error;
+          }
+          appendAndBroadcastLog(projectId, "⚠️ Docker Desktop is unavailable. Falling back to native dependency installation...", io);
+        }
+      }
+
+      // Native dependency installation on host
+      appendAndBroadcastLog(projectId, `⚙ Running dependency installation: ${installCmd}...`, io);
+
+      const isWin = process.platform === "win32";
+      const shellCmd = isWin ? "cmd.exe" : "sh";
+      const args = isWin ? ["/c", installCmd] : ["-c", installCmd];
+
+      return await new Promise((resolve) => {
+        const child = spawn(shellCmd, args, {
+          cwd: projectDir,
+          env: getProjectExecutionEnv(projectDir),
+        });
+
+        child.stdout.on("data", (data) => {
+          const text = data.toString();
+          appendAndBroadcastLog(projectId, text, io);
+        });
+
+        child.stderr.on("data", (data) => {
+          const text = data.toString();
+          appendAndBroadcastLog(projectId, text, io);
+        });
+
+        child.on("exit", async (code) => {
+          if (code === 0 && areDependenciesInstalled(projectDir, project?.projectType)) {
+            appendAndBroadcastLog(projectId, "✅ Dependencies installed successfully!", io);
+            await updateServerStatus(projectId, "ready", null, io);
+            resolve(true);
+          } else if (code === 0) {
+            appendAndBroadcastLog(projectId, "✅ Dependencies installed successfully!", io);
+            await updateServerStatus(projectId, "ready", null, io);
+            resolve(true);
+          } else {
+            appendAndBroadcastLog(projectId, `❌ Dependency installation failed with exit code ${code}`, io);
+            await updateServerStatus(projectId, "error", null, io);
+            resolve(false);
+          }
+        });
+
+        child.on("error", async (err) => {
+          appendAndBroadcastLog(projectId, `❌ Installation error: ${err.message}`, io);
+          await updateServerStatus(projectId, "error", null, io);
+          resolve(false);
+        });
       });
-      if (result.output) appendAndBroadcastLog(projectId, result.output, io);
-      const installed = result.exitCode === 0;
-      if (!installed) {
-        appendAndBroadcastLog(projectId, `❌ Dependency installation failed (exit code ${result.exitCode}).`, io);
-        await updateServerStatus(projectId, "error", null, io);
-      }
-      return installed;
-    } catch (error) {
-      if (error.errorCode !== "DOCKER_UNAVAILABLE") {
-        await updateServerStatus(projectId, "error", null, io);
-        throw error;
-      }
-      appendAndBroadcastLog(projectId, "⚠️ Docker Desktop is unavailable. Falling back to native dependency installation...", io);
+    } finally {
+      // Guarantee lock release even on error or crash
+      activeInstallations.delete(strId);
     }
-  }
+  })();
 
-  // Verify if package.json exists before attempting to install
-  const pkgJsonPath = path.join(projectDir, "package.json");
-  if (!fs.existsSync(pkgJsonPath)) {
-    await syncProjectFilesToDisk(projectId);
-  }
-  if (!fs.existsSync(pkgJsonPath)) {
-    appendAndBroadcastLog(projectId, `⚠️ No package.json found in ${projectDir}. Skipping dependency installation.`, io);
-    return true;
-  }
-
-  // Skip if node_modules already exists and contains installed binaries (.bin)
-  const isWin = process.platform === "win32";
-  const binPath = path.join(nodeModulesPath, ".bin");
-  const viteBin = path.join(binPath, isWin ? "vite.cmd" : "vite");
-  const vitePkg = path.join(nodeModulesPath, "vite");
-  const hasVite = fs.existsSync(viteBin) || fs.existsSync(vitePkg);
-
-  if (project?.projectType === "react-vite") {
-    if (fs.existsSync(nodeModulesPath) && hasVite) {
-      appendAndBroadcastLog(projectId, "✔ Dependencies already installed (Vite found in node_modules).", io);
-      return true;
-    }
-  } else if (fs.existsSync(nodeModulesPath) && fs.existsSync(binPath) && installCmd.includes("npm")) {
-    appendAndBroadcastLog(projectId, "✔ Dependencies already installed (node_modules present).", io);
-    return true;
-  }
-
-  await updateServerStatus(projectId, "installing", null, io);
-  appendAndBroadcastLog(projectId, `⚙ Running dependency installation: ${installCmd}...`, io);
-
-  return new Promise((resolve) => {
-    const shellCmd = isWin ? "cmd.exe" : "sh";
-    const args = isWin ? ["/c", installCmd] : ["-c", installCmd];
-
-    const child = spawn(shellCmd, args, {
-      cwd: projectDir,
-      env: getProjectExecutionEnv(projectDir),
-    });
-
-    child.stdout.on("data", (data) => {
-      const text = data.toString();
-      appendAndBroadcastLog(projectId, text, io);
-    });
-
-    child.stderr.on("data", (data) => {
-      const text = data.toString();
-      appendAndBroadcastLog(projectId, text, io);
-    });
-
-    child.on("exit", (code) => {
-      if (code === 0) {
-        appendAndBroadcastLog(projectId, "✅ Dependencies installed successfully!", io);
-        resolve(true);
-      } else {
-        appendAndBroadcastLog(projectId, `❌ Dependency installation failed with exit code ${code}`, io);
-        updateServerStatus(projectId, "error", null, io);
-        resolve(false);
-      }
-    });
-
-    child.on("error", (err) => {
-      appendAndBroadcastLog(projectId, `❌ Installation error: ${err.message}`, io);
-      updateServerStatus(projectId, "error", null, io);
-      resolve(false);
-    });
-  });
+  activeInstallations.set(strId, installPromise);
+  return installPromise;
 };
 
 /**
@@ -545,14 +650,42 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
   appendAndBroadcastLog(projectId, `[PROJECT] Starting project ${projectId}`, io);
   appendAndBroadcastLog(projectId, `[PORT] Allocated ${allocatedPort}`, io);
 
-  if (project?.projectType === "react-vite") {
+  const projectDir = await syncProjectFilesToDisk(projectId);
+
+  // 1. Verify package.json exists
+  const pkgJsonPath = path.join(projectDir, "package.json");
+  if (!fs.existsSync(pkgJsonPath)) {
     await syncProjectFilesToDisk(projectId);
+  }
+  if (!fs.existsSync(pkgJsonPath)) {
+    const errorMsg = "package.json not found in this project. Cannot start development server.";
+    appendAndBroadcastLog(projectId, `❌ [EXECUTOR] ${errorMsg}`, io);
+    await updateServerStatus(projectId, "error", null, io);
+    releaseProjectPort(projectId);
+    throw new Error(errorMsg);
+  }
+
+  // 2. Strictly verify dependencies are installed BEFORE attempting to execute Vite
+  if (!areDependenciesInstalled(projectDir, project?.projectType)) {
+    appendAndBroadcastLog(projectId, "⚙ Dependencies not detected. Installing dependencies before starting dev server...", io);
+    const installed = await installDependencies(projectId, io);
+    if (!installed || !areDependenciesInstalled(projectDir, project?.projectType)) {
+      const errorMsg = "Dependencies are not installed. Please click Install to install dependencies before running the development server.";
+      appendAndBroadcastLog(projectId, `❌ [EXECUTOR] ${errorMsg}`, io);
+      await updateServerStatus(projectId, "error", null, io);
+      releaseProjectPort(projectId);
+      throw new Error(errorMsg);
+    }
+  }
+
+  // 3. Try Docker sandbox execution if applicable
+  if (project?.projectType === "react-vite") {
     activeServers.set(projectId, {
       process: null,
       port: allocatedPort,
       status: "starting",
       logs: [],
-      projectDir: null,
+      projectDir,
       sandbox: true,
     });
     await updateServerStatus(projectId, "starting", allocatedPort, io);
@@ -588,9 +721,7 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
     }
   }
 
-  // Initialize server record
-  const projectDir = await syncProjectFilesToDisk(projectId);
-
+  // 4. Native development server execution (Dependencies are guaranteed installed!)
   activeServers.set(projectId, {
     process: null,
     port: allocatedPort,
@@ -598,23 +729,6 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
     logs: [],
     projectDir,
   });
-
-  // Verify package.json exists
-  const pkgJsonPath = path.join(projectDir, "package.json");
-  if (!fs.existsSync(pkgJsonPath)) {
-    await syncProjectFilesToDisk(projectId);
-  }
-  if (!fs.existsSync(pkgJsonPath)) {
-    const errorMsg = `package.json not found in project directory (${projectDir}). Cannot start development server.`;
-    appendAndBroadcastLog(projectId, `❌ [EXECUTOR] ${errorMsg}`, io);
-    throw new Error(errorMsg);
-  }
-
-  // Run dependency installation first
-  const installed = await installDependencies(projectId, io);
-  if (!installed) {
-    throw new Error("Failed to install project dependencies.");
-  }
 
   await updateServerStatus(projectId, "starting", allocatedPort, io);
   appendAndBroadcastLog(projectId, `[EXECUTOR] Starting ${isPreview ? "preview" : "dev"} server on port ${allocatedPort}...`, io);
