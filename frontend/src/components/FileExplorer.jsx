@@ -24,13 +24,22 @@ import {
 } from "lucide-react";
 import { useToast } from "../context/ToastContext";
 import ImportProjectModal from "./ImportProjectModal";
+import TrashModal from "./TrashModal";
 import {
   createFileNodeRequest,
   renameFileNodeRequest,
   deleteFileNodeRequest,
 } from "../services/file.service";
 
-const FileExplorer = ({ projectId, files, activeFileId, onSelectFile, refreshFiles, isReadOnly = false }) => {
+const FileExplorer = ({
+  projectId,
+  files,
+  activeFileId,
+  onSelectFile,
+  refreshFiles,
+  isReadOnly = false,
+  isOwnerOrAdmin = false,
+}) => {
   const [collapsedFolders, setCollapsedFolders] = useState({});
   const [editingNodeId, setEditingNodeId] = useState(null);
   const [editingName, setEditingName] = useState("");
@@ -38,6 +47,7 @@ const FileExplorer = ({ projectId, files, activeFileId, onSelectFile, refreshFil
   const [creatingNode, setCreatingNode] = useState(null); // { parentId: string | null, isFolder: boolean }
   const [creatingName, setCreatingName] = useState("");
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isTrashModalOpen, setIsTrashModalOpen] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
 
   const { addToast } = useToast();
@@ -433,32 +443,41 @@ const FileExplorer = ({ projectId, files, activeFileId, onSelectFile, refreshFil
             </button>
           </div>
         </div>
-        {!isReadOnly && (
-          <div className="flex items-center gap-1">
-            <button
-              onClick={refreshFiles}
-              className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
-              title="Refresh Tree"
-            >
-              <RefreshCw size={13} />
-            </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setIsTrashModalOpen(true)}
+            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+            title="Open Trash & File Recovery"
+          >
+            <Trash2 size={13} />
+          </button>
+          {!isReadOnly && (
+            <>
+              <button
+                onClick={refreshFiles}
+                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+                title="Refresh Tree"
+              >
+                <RefreshCw size={13} />
+              </button>
 
-            <button
-              onClick={() => setCreatingNode({ parentId: null, isFolder: false })}
-              className="p-1 rounded hover:bg-slate-800 text-indigo-300 hover:text-indigo-200 transition-colors cursor-pointer"
-              title="Create a new file such as C, HTML, Java, or CSS"
-            >
-              <FilePlus size={13} />
-            </button>
-            <button
-              onClick={() => setCreatingNode({ parentId: null, isFolder: true })}
-              className="p-1 rounded hover:bg-slate-800 text-indigo-300 hover:text-indigo-200 transition-colors cursor-pointer"
-              title="Create a new folder"
-            >
-              <FolderPlus size={13} />
-            </button>
-          </div>
-        )}
+              <button
+                onClick={() => setCreatingNode({ parentId: null, isFolder: false })}
+                className="p-1 rounded hover:bg-slate-800 text-indigo-300 hover:text-indigo-200 transition-colors cursor-pointer"
+                title="Create a new file such as C, HTML, Java, or CSS"
+              >
+                <FilePlus size={13} />
+              </button>
+              <button
+                onClick={() => setCreatingNode({ parentId: null, isFolder: true })}
+                className="p-1 rounded hover:bg-slate-800 text-indigo-300 hover:text-indigo-200 transition-colors cursor-pointer"
+                title="Create a new folder"
+              >
+                <FolderPlus size={13} />
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Explorer Tree Canvas with Drag & Drop Import Dropzone */}
@@ -489,6 +508,14 @@ const FileExplorer = ({ projectId, files, activeFileId, onSelectFile, refreshFil
           onClose={() => setIsImportModalOpen(false)}
           targetProjectId={projectId}
           onSuccess={refreshFiles}
+        />
+        <TrashModal
+          isOpen={isTrashModalOpen}
+          onClose={() => setIsTrashModalOpen(false)}
+          projectId={projectId}
+          onRestored={refreshFiles}
+          isReadOnly={isReadOnly}
+          isOwnerOrAdmin={isOwnerOrAdmin}
         />
         {/* Create Root Node Form */}
         {creatingNode && creatingNode.parentId === null && (

@@ -628,6 +628,10 @@ const Workspace = () => {
             addToast(`Collaborator deleted "${data.name}"`, "info");
           } else if (data.action === "restore" && data.file?.name) {
             addToast(`Collaborator restored "${data.file.name}"`, "info");
+          } else if (data.action === "permanent_delete" && data.name) {
+            addToast(`Collaborator permanently deleted "${data.name}"`, "info");
+          } else if (data.action === "empty_trash") {
+            addToast("Collaborator emptied the project trash", "info");
           } else if (data.action === "rename" && data.file?.name) {
             addToast(`Collaborator renamed "${data.oldName || "file"}" to "${data.file.name}"`, "info");
           } else if (data.action === "upload" && data.file?.name) {
@@ -1363,6 +1367,7 @@ const Workspace = () => {
             activeFileId={activeFileId}
             onSelectFile={handleSelectFile}
             isReadOnly={isViewer}
+            isOwnerOrAdmin={isOwnerOrAdmin}
             refreshFiles={refreshProjectFiles}
           />
         </aside>

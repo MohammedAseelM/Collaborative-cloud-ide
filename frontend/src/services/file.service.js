@@ -78,3 +78,39 @@ export const uploadFolderRequest = async (projectId, formData) => {
   });
   return data;
 };
+
+/**
+ * Fetches all soft-deleted files and folders in a project.
+ * @param {string} projectId
+ */
+export const fetchTrashFiles = async (projectId) => {
+  const { data } = await api.get(`/files/projects/${projectId}/trash`);
+  return data;
+};
+
+/**
+ * Restores a soft-deleted file or folder.
+ * @param {string} fileId
+ */
+export const restoreFileNodeRequest = async (fileId) => {
+  const { data } = await api.post(`/files/${fileId}/restore`);
+  return data;
+};
+
+/**
+ * Permanently deletes a soft-deleted file or folder (Owner/Admin only).
+ * @param {string} fileId
+ */
+export const permanentDeleteFileNodeRequest = async (fileId) => {
+  const { data } = await api.delete(`/files/${fileId}/permanent`);
+  return data;
+};
+
+/**
+ * Empties the project trash by permanently deleting all soft-deleted records (Owner/Admin only).
+ * @param {string} projectId
+ */
+export const emptyTrashRequest = async (projectId) => {
+  const { data } = await api.delete(`/files/projects/${projectId}/trash`);
+  return data;
+};

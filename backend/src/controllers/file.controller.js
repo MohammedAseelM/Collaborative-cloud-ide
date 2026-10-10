@@ -396,8 +396,36 @@ export const deleteFileNode = async (req, res, next) => {
 };
 
 /**
+ * Helper to safely resolve a non-colliding name when restoring a node.
+ */
+export const resolveAvailableName = async (projectId, originalName, parentId, isFolder, excludeId = null) => {
+  let candidateName = originalName;
+  let counter = 1;
+  while (true) {
+    const query = {
+      project: projectId,
+      name: candidateName,
+      parentId: parentId || null,
+      isDeleted: { $ne: true },
+    };
+    if (excludeId) {
+      query._id = { $ne: excludeId };
+    }
+    const existing = await FileNode.findOne(query);
+    if (!existing) {
+      return candidateName;
+    }
+    const ext = isFolder ? "" : path.extname(originalName);
+    const base = isFolder ? originalName : path.basename(originalName, ext);
+    candidateName = `${base} (restored${counter > 1 ? ` ${counter}` : ""})${ext}`;
+    counter++;
+  }
+};
+
+/**
  * @route   POST /api/files/:fileId/restore
- * @desc    Restore a soft-deleted file or folder
+ * @desc    Restore a soft-deleted file or folder, recursively restoring any soft-deleted
+ *          ancestor folders in order so the file is properly visible in the explorer.
  * @access  Private (members with Editor permission)
  */
 export const restoreFileNode = async (req, res, next) => {
@@ -421,23 +449,81 @@ export const restoreFileNode = async (req, res, next) => {
     verifyProjectPermission(project, req.user._id, "Editor");
     assertProjectEditable(node.project, req.user);
 
-    // Handle concurrent changes & filename conflicts safely
-    const existing = await FileNode.findOne({
-      project: node.project,
-      name: node.name,
-      parentId: node.parentId,
-      isDeleted: { $ne: true },
-    });
+    // 1. Resolve soft-deleted ancestor hierarchy from root to target's parent
+    const ancestorsToRestore = [];
+    let currParentId = node.parentId;
+    const visited = new Set();
+    while (currParentId) {
+      const pidStr = currParentId.toString();
+      if (visited.has(pidStr)) break;
+      visited.add(pidStr);
 
-    let restoredName = node.name;
-    if (existing) {
-      const ext = path.extname(node.name);
-      const base = path.basename(node.name, ext);
-      restoredName = `${base} (restored)${ext}`;
-      node.name = restoredName;
+      const ancestor = await FileNode.findOne({ _id: currParentId, project: node.project });
+      if (!ancestor) break; // Missing parent record
+
+      if (ancestor.isDeleted) {
+        ancestorsToRestore.unshift(ancestor); // Unshift so root-most ancestor is index 0
+      }
+      currParentId = ancestor.parentId;
     }
 
-    const relativePath = await resolveNodeRelativePath(restoredName, node.parentId, node.project);
+    // Handle missing parents: if top ancestor has non-existent parent, reparent to root
+    if (ancestorsToRestore.length > 0 && ancestorsToRestore[0].parentId) {
+      const topParentExists = await FileNode.exists({ _id: ancestorsToRestore[0].parentId, project: node.project });
+      if (!topParentExists) {
+        ancestorsToRestore[0].parentId = null;
+      }
+    } else if (ancestorsToRestore.length === 0 && node.parentId) {
+      const parentExists = await FileNode.exists({ _id: node.parentId, project: node.project });
+      if (!parentExists) {
+        node.parentId = null;
+      }
+    }
+
+    // 2. Restore necessary ancestor folders in correct root-to-leaf order
+    const restoredAncestors = [];
+    for (const ancestor of ancestorsToRestore) {
+      const safeAncestorName = await resolveAvailableName(
+        node.project,
+        ancestor.name,
+        ancestor.parentId,
+        ancestor.isFolder,
+        ancestor._id
+      );
+      ancestor.name = safeAncestorName;
+      const ancestorRelPath = await resolveNodeRelativePath(safeAncestorName, ancestor.parentId, node.project);
+      ancestor.relativePath = ancestorRelPath;
+      ancestor.isDeleted = false;
+      ancestor.deletedAt = null;
+      ancestor.deletedBy = null;
+      ancestor.updatedBy = req.user._id;
+      await ancestor.save();
+
+      await writeNodeToDisk(project.owner, node.project, ancestorRelPath, ancestor.isFolder, ancestor.content || "");
+      restoredAncestors.push(ancestor);
+
+      await Activity.create({
+        project: node.project,
+        user: req.user._id,
+        type: "RESTORE_VERSION",
+        details: {
+          action: "restore_ancestor",
+          name: safeAncestorName,
+          type: "folder",
+        },
+      });
+    }
+
+    // 3. Restore the target node
+    const safeNodeName = await resolveAvailableName(
+      node.project,
+      node.name,
+      node.parentId,
+      node.isFolder,
+      node._id
+    );
+    node.name = safeNodeName;
+    const relativePath = await resolveNodeRelativePath(safeNodeName, node.parentId, node.project);
     node.relativePath = relativePath;
     node.isDeleted = false;
     node.deletedAt = null;
@@ -445,17 +531,38 @@ export const restoreFileNode = async (req, res, next) => {
     node.updatedBy = req.user._id;
     await node.save();
 
-    // Recreate file/folder on physical disk
     await writeNodeToDisk(project.owner, node.project, relativePath, node.isFolder, node.content || "");
 
-    // Record restoration as a new activity and new version snapshot per requirement
+    // 4. If target is a folder, also restore its soft-deleted children
+    if (node.isFolder) {
+      const restoreSubtree = async (folderId) => {
+        const children = await FileNode.find({ parentId: folderId, isDeleted: true });
+        for (const child of children) {
+          const childSafeName = await resolveAvailableName(node.project, child.name, child.parentId, child.isFolder, child._id);
+          child.name = childSafeName;
+          child.relativePath = await resolveNodeRelativePath(childSafeName, child.parentId, node.project);
+          child.isDeleted = false;
+          child.deletedAt = null;
+          child.deletedBy = null;
+          child.updatedBy = req.user._id;
+          await child.save();
+          await writeNodeToDisk(project.owner, node.project, child.relativePath, child.isFolder, child.content || "");
+          if (child.isFolder) {
+            await restoreSubtree(child._id);
+          }
+        }
+      };
+      await restoreSubtree(node._id);
+    }
+
+    // Record restoration activity and version snapshot
     const latestVersion = await Version.findOne({ project: node.project }).sort({ versionNumber: -1 });
     const versionNumber = latestVersion ? latestVersion.versionNumber + 1 : 1;
     await Version.create({
       project: node.project,
       code: node.content || "",
       versionNumber,
-      description: `Restored ${restoredName} (v${versionNumber})`,
+      description: `Restored ${safeNodeName} (v${versionNumber})`,
       createdBy: req.user._id,
     });
 
@@ -465,9 +572,10 @@ export const restoreFileNode = async (req, res, next) => {
       type: "RESTORE_VERSION",
       details: {
         action: "restore",
-        name: restoredName,
+        name: safeNodeName,
         type: node.isFolder ? "folder" : "file",
         versionNumber,
+        restoredAncestorsCount: restoredAncestors.length,
       },
     });
 
@@ -477,8 +585,9 @@ export const restoreFileNode = async (req, res, next) => {
         action: "restore",
         file: node,
         fileId: node._id,
-        name: restoredName,
+        name: safeNodeName,
         isFolder: node.isFolder,
+        restoredAncestors: restoredAncestors.map((a) => ({ _id: a._id, name: a.name })),
         userId: req.user._id,
       });
     }
@@ -487,6 +596,146 @@ export const restoreFileNode = async (req, res, next) => {
       success: true,
       message: `${node.isFolder ? "Folder" : "File"} restored successfully`,
       file: node,
+      restoredAncestors,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @route   DELETE /api/files/:fileId/permanent
+ * @desc    Permanently delete a soft-deleted file or folder (Owner/Admin only)
+ * @access  Private (Owner/Admin only)
+ */
+export const permanentDeleteFileNode = async (req, res, next) => {
+  try {
+    const { fileId } = req.params;
+
+    const node = await FileNode.findById(fileId);
+    if (!node) {
+      const error = new Error("File or folder not found");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (!node.isDeleted) {
+      const error = new Error("Cannot permanently delete an active file. Please soft-delete it first.");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const project = await findMemberProjectOrThrow(node.project, req.user._id);
+    verifyProjectPermission(project, req.user._id, "Admin"); // Owner/Admin only
+    assertProjectEditable(node.project, req.user);
+
+    // Durable audit log before permanent destruction
+    await Activity.create({
+      project: node.project,
+      user: req.user._id,
+      type: "DELETE",
+      details: {
+        action: "permanent_delete",
+        name: node.name,
+        type: node.isFolder ? "folder" : "file",
+        relativePath: node.relativePath,
+      },
+    });
+
+    // Delete disk artifact
+    const targetRelPath = node.relativePath || node.name;
+    await deleteNodeFromDisk(project.owner, node.project, targetRelPath);
+
+    // Recursively collect all descendant IDs if folder
+    const collectDescendantIds = async (folderId) => {
+      const list = [folderId];
+      const children = await FileNode.find({ parentId: folderId });
+      for (const child of children) {
+        const sub = await collectDescendantIds(child._id);
+        list.push(...sub);
+      }
+      return list;
+    };
+
+    const idsToDelete = node.isFolder ? await collectDescendantIds(node._id) : [node._id];
+    await FileNode.deleteMany({ _id: { $in: idsToDelete } });
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`project:${node.project.toString()}`).emit("files-updated", {
+        action: "permanent_delete",
+        fileId: node._id,
+        name: node.name,
+        isFolder: node.isFolder,
+        userId: req.user._id,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `${node.isFolder ? "Folder" : "File"} permanently deleted successfully`,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @route   DELETE /api/files/projects/:projectId/trash
+ * @desc    Empty project's Trash by permanently deleting all soft-deleted records (Owner/Admin only)
+ * @access  Private (Owner/Admin only)
+ */
+export const emptyTrash = async (req, res, next) => {
+  try {
+    const { projectId } = req.params;
+
+    const project = await findMemberProjectOrThrow(projectId, req.user._id);
+    verifyProjectPermission(project, req.user._id, "Admin"); // Owner/Admin only
+    assertProjectEditable(projectId, req.user);
+
+    const deletedNodes = await FileNode.find({ project: projectId, isDeleted: true });
+    if (deletedNodes.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: "Trash is already empty",
+        count: 0,
+      });
+    }
+
+    // Durable audit log before permanent destruction
+    await Activity.create({
+      project: projectId,
+      user: req.user._id,
+      type: "DELETE",
+      details: {
+        action: "empty_trash",
+        deletedCount: deletedNodes.length,
+        names: deletedNodes.slice(0, 25).map((n) => n.name),
+      },
+    });
+
+    // Delete disk artifacts safely
+    for (const node of deletedNodes) {
+      if (node.relativePath) {
+        await deleteNodeFromDisk(project.owner, projectId, node.relativePath);
+      }
+    }
+
+    const deleteResult = await FileNode.deleteMany({ project: projectId, isDeleted: true });
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`project:${projectId.toString()}`).emit("files-updated", {
+        action: "empty_trash",
+        count: deleteResult.deletedCount,
+        userId: req.user._id,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Trash emptied successfully",
+      count: deleteResult.deletedCount,
     });
   } catch (error) {
     next(error);

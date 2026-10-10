@@ -99,6 +99,112 @@ const trackUserSocketDisconnect = (projectId, userId, socketId) => {
 };
 
 /**
+ * Token Bucket implementation for Socket.IO event rate limiting.
+ */
+class TokenBucket {
+  constructor(maxTokens, refillRate) {
+    this.maxTokens = maxTokens;
+    this.refillRate = refillRate; // tokens per second
+    this.tokens = maxTokens;
+    this.lastRefill = Date.now();
+  }
+
+  consume(tokens = 1) {
+    const now = Date.now();
+    const elapsed = (now - this.lastRefill) / 1000;
+    this.tokens = Math.min(this.maxTokens, this.tokens + elapsed * this.refillRate);
+    this.lastRefill = now;
+
+    if (this.tokens >= tokens) {
+      this.tokens -= tokens;
+      return true;
+    }
+    return false;
+  }
+
+  getRetryAfter(tokens = 1) {
+    if (this.tokens >= tokens) return 0;
+    const needed = tokens - this.tokens;
+    return Math.ceil((needed / this.refillRate) * 1000);
+  }
+}
+
+// Configurable event limits (burst tokens, refill per second)
+export const SOCKET_RATE_LIMITS = {
+  edit: {
+    maxTokens: Number(process.env.SOCKET_RATE_LIMIT_EDIT_BURST) || 60,
+    refillRate: Number(process.env.SOCKET_RATE_LIMIT_EDIT_REFILL) || 40,
+  },
+  cursor: {
+    maxTokens: Number(process.env.SOCKET_RATE_LIMIT_CURSOR_BURST) || 100,
+    refillRate: Number(process.env.SOCKET_RATE_LIMIT_CURSOR_REFILL) || 60,
+  },
+  typing: {
+    maxTokens: Number(process.env.SOCKET_RATE_LIMIT_TYPING_BURST) || 30,
+    refillRate: Number(process.env.SOCKET_RATE_LIMIT_TYPING_REFILL) || 15,
+  },
+};
+
+const socketRateLimiters = new Map();
+const userRateLimiters = new Map();
+
+const getOrCreateLimiters = (map, key) => {
+  if (!map.has(key)) {
+    map.set(key, {
+      edit: new TokenBucket(SOCKET_RATE_LIMITS.edit.maxTokens, SOCKET_RATE_LIMITS.edit.refillRate),
+      cursor: new TokenBucket(SOCKET_RATE_LIMITS.cursor.maxTokens, SOCKET_RATE_LIMITS.cursor.refillRate),
+      typing: new TokenBucket(SOCKET_RATE_LIMITS.typing.maxTokens, SOCKET_RATE_LIMITS.typing.refillRate),
+      lastActive: Date.now(),
+    });
+  }
+  const entry = map.get(key);
+  entry.lastActive = Date.now();
+  return entry;
+};
+
+/**
+ * Check rate limit for a socket connection and associated user account.
+ */
+export const checkSocketRateLimit = (socket, category) => {
+  if (process.env.DISABLE_SOCKET_RATE_LIMIT === "true") {
+    return { allowed: true, retryAfter: 0 };
+  }
+  const sLimiter = getOrCreateLimiters(socketRateLimiters, socket.id);
+  const uId = socket.user?._id ? String(socket.user._id) : null;
+  const uLimiter = uId ? getOrCreateLimiters(userRateLimiters, uId) : null;
+
+  const sBucket = sLimiter[category];
+  const uBucket = uLimiter ? uLimiter[category] : null;
+
+  if (!sBucket.consume(1)) {
+    return { allowed: false, retryAfter: sBucket.getRetryAfter(1) };
+  }
+
+  if (uBucket && !uBucket.consume(1)) {
+    return { allowed: false, retryAfter: uBucket.getRetryAfter(1) };
+  }
+
+  return { allowed: true, retryAfter: 0 };
+};
+
+export const cleanupSocketRateLimit = (socket) => {
+  socketRateLimiters.delete(socket.id);
+  const uId = socket.user?._id ? String(socket.user._id) : null;
+  if (uId) {
+    let hasOtherSockets = false;
+    for (const projectMap of projectUserSockets.values()) {
+      if (projectMap.has(uId) && projectMap.get(uId).size > 0) {
+        hasOtherSockets = true;
+        break;
+      }
+    }
+    if (!hasOtherSockets) {
+      userRateLimiters.delete(uId);
+    }
+  }
+};
+
+/**
  * Revalidate project membership and role permissions from the database.
  * Prevents stale sockets from continuing to access project data after removal or role change.
  */
@@ -445,15 +551,37 @@ export const registerSocketHandlers = (io) => {
         return;
       }
 
+      const rawTarget = fileId || socket.activeFileId;
+      const targetFileId = rawTarget ? rawTarget.toString() : null;
+      if (!targetFileId) return;
+
+      // Rate limit check upfront to protect both CPU and database from floods
+      const limitResult = checkSocketRateLimit(socket, "edit");
+      if (!limitResult.allowed) {
+        socket.emit("rate-limit-exceeded", {
+          event: "code-change",
+          category: "edit",
+          message: "Rate limit exceeded for code edits. Please slow down.",
+          retryAfter: limitResult.retryAfter,
+          fileId: targetFileId,
+        });
+        socket.emit("error", {
+          message: "Rate limit exceeded for code edits. Please slow down.",
+          rateLimited: true,
+          retryAfter: limitResult.retryAfter,
+        });
+        if (fileCodeCache[targetFileId]) {
+          socket.emit("file-sync", { fileId: targetFileId, code: fileCodeCache[targetFileId].code });
+        }
+        return;
+      }
+
       // Revalidate membership and role dynamically from DB
       const isAuthorized = await verifySocketMembership(socket, "Editor");
       if (!isAuthorized) {
         socket.emit("error", { message: "Your role has read-only access to this project" });
         return;
       }
-      const rawTarget = fileId || socket.activeFileId;
-      const targetFileId = rawTarget ? rawTarget.toString() : null;
-      if (!targetFileId) return;
 
       if (!socket.activeFileId || socket.activeFileId.toString() !== targetFileId) {
         socket.activeFileId = targetFileId;
@@ -522,6 +650,17 @@ export const registerSocketHandlers = (io) => {
 
     // 4. Cursor position & selection range tracking in File room
     socket.on("cursor-move", async (payload = {}) => {
+      const cursorLimit = checkSocketRateLimit(socket, "cursor");
+      if (!cursorLimit.allowed) {
+        socket.emit("rate-limit-exceeded", {
+          event: "cursor-move",
+          category: "cursor",
+          message: "Rate limit exceeded for cursor movements. Please slow down.",
+          retryAfter: cursorLimit.retryAfter,
+        });
+        return;
+      }
+
       const isAuthorized = await verifySocketMembership(socket, "Viewer");
       if (!isAuthorized) return;
 
@@ -597,6 +736,9 @@ export const registerSocketHandlers = (io) => {
 
     // 4.5 Selection Change Tracking in File room
     socket.on("selection-change", async (payload = {}) => {
+      const selLimit = checkSocketRateLimit(socket, "cursor");
+      if (!selLimit.allowed) return;
+
       const isAuthorized = await verifySocketMembership(socket, "Viewer");
       if (!isAuthorized) return;
 
@@ -651,6 +793,9 @@ export const registerSocketHandlers = (io) => {
 
     // 4.6 Mouse Pointer Movement Tracking in File room
     socket.on("mouse-move", async (payload = {}) => {
+      const mouseLimit = checkSocketRateLimit(socket, "cursor");
+      if (!mouseLimit.allowed) return;
+
       const isAuthorized = await verifySocketMembership(socket, "Viewer");
       if (!isAuthorized) return;
 
@@ -688,6 +833,10 @@ export const registerSocketHandlers = (io) => {
     // 5. Typing indicators in File room
     socket.on("typing-status", async ({ fileId, isTyping }) => {
       if (typeof isTyping !== "boolean") return;
+
+      const typingLimit = checkSocketRateLimit(socket, "typing");
+      if (!typingLimit.allowed) return;
+
       const isAuthorized = await verifySocketMembership(socket, "Viewer");
       if (!isAuthorized) return;
 
@@ -1036,6 +1185,7 @@ export const registerSocketHandlers = (io) => {
     // 7. Handle Disconnection
     socket.on("disconnect", async () => {
       logger.info(`Socket disconnected: ${socket.id}`);
+      cleanupSocketRateLimit(socket);
       stopProjectTerminal(socket);
       releaseSocketExecutionLock(socket, io);
       releaseCursorColor(socket);

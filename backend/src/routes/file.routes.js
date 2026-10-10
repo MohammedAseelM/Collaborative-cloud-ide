@@ -15,6 +15,8 @@ import {
   getProjectTree,
   restoreFileNode,
   getTrashFiles,
+  permanentDeleteFileNode,
+  emptyTrash,
 } from "../controllers/file.controller.js";
 import { protect } from "../middlewares/auth.middleware.js";
 import upload, { uploadMultiple } from "../config/multer.js";
@@ -32,12 +34,14 @@ router.get("/projects/:projectId/tree", getProjectTree);
 // Project specific file structures
 router.get("/projects/:projectId/files", getProjectFiles);
 router.get("/projects/:projectId/trash", getTrashFiles);
+router.delete("/projects/:projectId/trash", emptyTrash);
 router.post("/projects/:projectId/files", createFileNode);
 router.post("/projects/:projectId/upload", upload.single('file'), uploadFile);
 router.post("/projects/:projectId/upload-folder", uploadMultiple.array('files', 500), uploadFolder);
 
 // Single file operations
 router.post("/:fileId/restore", restoreFileNode);
+router.delete("/:fileId/permanent", permanentDeleteFileNode);
 router.route("/:fileId")
   .get(getFileContent)
   .patch(renameFileNode)
