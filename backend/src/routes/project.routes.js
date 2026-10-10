@@ -27,6 +27,7 @@ import {
 import {
   createVersion,
   getVersions,
+  getVersionById,
   restoreVersion,
 } from "../controllers/version.controller.js";
 import { getActivities } from "../controllers/activity.controller.js";
@@ -124,6 +125,7 @@ router.route("/:id/versions")
   .get(getVersions)
   .post(createVersion);
 
+router.get("/:id/versions/:versionId", getVersionById);
 router.post("/:id/versions/:versionId/restore", restoreVersion);
 
 // Project Activities Timeline log

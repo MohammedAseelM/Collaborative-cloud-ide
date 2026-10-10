@@ -2,6 +2,7 @@
 // Responsibility: Handle file-scoped real-time synchronization, online list management,
 // cursor tracking, typing indicators, and debounced database file saves.
 
+import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 import User from "../models/user.model.js";
 import Project from "../models/project.model.js";
@@ -12,6 +13,12 @@ import { env } from "../config/env.js";
 import logger from "../utils/logger.js";
 import { spawn } from "node:child_process";
 import { syncProjectFilesToDisk, syncFileNodeToWorkspace } from "../services/projectRunner.service.js";
+import {
+  startProjectTerminalSession,
+  handleProjectTerminalInput,
+  handleProjectTerminalResize,
+  stopProjectTerminalSession,
+} from "../services/terminalService.js";
 import {
   acquireProjectEditLock,
   assertProjectEditable,
@@ -270,15 +277,7 @@ const parseCookies = (cookieHeader) => {
 };
 
 const stopProjectTerminal = (socket) => {
-  const terminalProcess = socket.projectTerminalProcess;
-  if (!terminalProcess) return;
-
-  socket.projectTerminalProcess = null;
-  if (process.platform === "win32" && terminalProcess.pid) {
-    spawn("taskkill", ["/pid", String(terminalProcess.pid), "/f", "/t"], { windowsHide: true });
-  } else {
-    terminalProcess.kill("SIGTERM");
-  }
+  stopProjectTerminalSession(socket);
 };
 
 const releaseSocketExecutionLock = (socket, io) => {
@@ -926,55 +925,46 @@ export const registerSocketHandlers = (io) => {
       }
     });
 
-    // 6.6 Persistent project command terminal. The authenticated workspace
-    // socket determines both the project directory and the member's role.
-    socket.on("project-terminal:start", async ({ projectId }) => {
+    // 6.6 Persistent project command terminal with secure sandbox integration.
+    socket.on("project-terminal:start", async ({ projectId, cols, rows } = {}) => {
       try {
         if (!projectId) {
           socket.emit("project-terminal-error", { message: "No project is selected for this terminal." });
           return;
         }
 
-        // The normal join-project event is asynchronous. Verify membership
-        // here as well so opening the terminal immediately after the page
-        // loads cannot leave it without a running shell.
-        if (!socket.projectId) {
-          socket.projectId = projectId;
+        if (!mongoose.Types.ObjectId.isValid(projectId)) {
+          socket.emit("project-terminal-error", { message: "A valid project ID is required to start the terminal." });
+          return;
         }
 
-        const isAuthorized = await verifySocketMembership(socket, "Editor");
-        if (!isAuthorized) {
+        const targetProject = await Project.findById(projectId).select("owner members memberRoles name");
+        if (!targetProject) {
+          socket.emit("project-terminal-error", { message: "Project not found or has been deleted." });
+          return;
+        }
+
+        const userIdStr = socket.user?._id?.toString();
+        const isMember = targetProject.members.some((m) => m.toString() === userIdStr);
+        if (!isMember) {
+          socket.emit("project-terminal-error", { message: "You are not a member of this project." });
+          return;
+        }
+
+        const targetRole = targetProject.owner.toString() === userIdStr
+          ? "Owner"
+          : targetProject.memberRoles?.get(userIdStr) || "Editor";
+
+        const roleLevels = { Viewer: 1, Client: 1, Editor: 2, Admin: 3, Owner: 4 };
+        if ((roleLevels[targetRole] || 0) < roleLevels["Editor"]) {
           socket.emit("project-terminal-error", { message: "Your project role cannot run terminal commands." });
           return;
         }
 
-        stopProjectTerminal(socket);
-        const projectDir = await syncProjectFilesToDisk(projectId);
-        const isWindows = process.platform === "win32";
-        const shell = isWindows ? "cmd.exe" : "sh";
-        const shellArgs = isWindows ? ["/Q"] : ["-i"];
-        const terminalProcess = spawn(shell, shellArgs, {
-          cwd: projectDir,
-          env: { ...process.env, FORCE_COLOR: "true" },
-          stdio: ["pipe", "pipe", "pipe"],
-          windowsHide: true,
-        });
-        socket.projectTerminalProcess = terminalProcess;
-        socket.emit("project-terminal-ready");
+        socket.projectId = projectId;
+        socket.projectRole = targetRole;
 
-        const forwardOutput = (data) => socket.emit("project-terminal-output", { data: data.toString() });
-        terminalProcess.stdout.on("data", forwardOutput);
-        terminalProcess.stderr.on("data", forwardOutput);
-        terminalProcess.on("error", (error) => {
-          logger.error(`Project terminal error: ${error.message}`);
-          socket.emit("project-terminal-error", { message: `Unable to start terminal: ${error.message}` });
-        });
-        terminalProcess.on("exit", (exitCode) => {
-          if (socket.projectTerminalProcess === terminalProcess) {
-            socket.projectTerminalProcess = null;
-          }
-          socket.emit("project-terminal-exit", { exitCode });
-        });
+        await startProjectTerminalSession(socket, projectId, { cols, rows });
       } catch (error) {
         logger.error(`Project terminal setup failed: ${error.message}`);
         socket.emit("project-terminal-error", { message: `Unable to start terminal: ${error.message}` });
@@ -982,20 +972,26 @@ export const registerSocketHandlers = (io) => {
     });
 
     socket.on("project-terminal:input", async ({ data } = {}) => {
+      const session = socket.projectTerminalSession;
+      if (!session) return;
+
       const isAuthorized = await verifySocketMembership(socket, "Editor");
       if (!isAuthorized) {
         socket.emit("project-terminal-error", { message: "Your project role cannot run terminal commands." });
         return;
       }
-      if (!socket.projectTerminalProcess?.stdin?.writable || typeof data !== "string") return;
-      if (data.length > 8_192) {
-        socket.emit("project-terminal-error", { message: "Terminal input is too large." });
-        return;
-      }
-      socket.projectTerminalProcess.stdin.write(data);
+      handleProjectTerminalInput(socket, data);
     });
 
-    socket.on("project-terminal:stop", () => stopProjectTerminal(socket));
+    socket.on("project-terminal:resize", ({ cols, rows } = {}) => {
+      if (!socket.projectTerminalSession) return;
+      handleProjectTerminalResize(socket, { cols, rows });
+    });
+
+    socket.on("project-terminal:stop", () => {
+      stopProjectTerminal(socket);
+      socket.emit("project-terminal-exit", { exitCode: 0, stoppedByUser: true });
+    });
 
     // 6.7 Interactive Code Execution with stdin/stdout streaming
     socket.on("run-code-interactive", async ({ projectId, code, language, input }) => {
@@ -1183,8 +1179,8 @@ export const registerSocketHandlers = (io) => {
     });
 
     // 7. Handle Disconnection
-    socket.on("disconnect", async () => {
-      logger.info(`Socket disconnected: ${socket.id}`);
+    socket.on("disconnect", async (reason) => {
+      logger.info(`Socket disconnected: ${socket.id} (Reason: ${reason})`);
       cleanupSocketRateLimit(socket);
       stopProjectTerminal(socket);
       releaseSocketExecutionLock(socket, io);

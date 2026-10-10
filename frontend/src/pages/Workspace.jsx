@@ -54,6 +54,7 @@ import { WorkspaceSkeleton } from "../components/Skeletons";
 import MemberModal from "../components/MemberModal";
 import DiffModal from "../components/DiffModal";
 import FileExplorer from "../components/FileExplorer";
+import VersionHistoryModal from "../components/VersionHistoryModal";
 import WorkspaceChatPanel from "../components/WorkspaceChatPanel";
 import NotificationDropdown from "../components/NotificationDropdown";
 import LivePreviewPanel from "../components/LivePreviewPanel";
@@ -314,7 +315,8 @@ const Workspace = () => {
   const [versions, setVersions] = useState([]);
   const [activities, setActivities] = useState([]);
   const [isSavingVersion, setIsSavingVersion] = useState(false);
-  const [versionNote, setVersionNote] = useState("");
+  const [versionName, setVersionName] = useState("");
+  const [isVersionModalOpen, setIsVersionModalOpen] = useState(false);
 
   const [liveRole, setLiveRole] = useState(null);
 
@@ -432,11 +434,50 @@ const Workspace = () => {
     loadProjectAndFiles();
   }, [loadProjectAndFiles]);
 
-  const refreshProjectFiles = useCallback(async () => {
+  const refreshProjectFiles = useCallback(async (preferredFileName = null) => {
     try {
       const data = await fetchProjectFiles(projectId);
-      setFiles(data.files || []);
-      return data.files || [];
+      const newFiles = data.files || [];
+      setFiles(newFiles);
+
+      // Re-map active file and open tabs to restored/fresh files
+      const sourceFiles = newFiles.filter((f) => !f.isFolder);
+      if (sourceFiles.length > 0) {
+        const priorityNames = [
+          "app.jsx",
+          "main.jsx",
+          "app.tsx",
+          "main.tsx",
+          "index.html",
+          "index.js",
+          "main.py",
+          "app.py",
+          "main.java",
+        ];
+        const target =
+          (preferredFileName && sourceFiles.find((f) => f.name.toLowerCase() === preferredFileName.toLowerCase())) ||
+          sourceFiles.find((f) => priorityNames.includes(f.name.toLowerCase())) ||
+          sourceFiles[0];
+
+        if (target) {
+          setActiveFileId(target._id);
+          setOpenTabs([{ fileId: target._id, name: target.name, isDirty: false }]);
+          if (editorRef.current) {
+            try {
+              isApplyingSocketEdit.current = true;
+              editorRef.current.setValue(target.content || "");
+              isApplyingSocketEdit.current = false;
+            } catch {}
+          }
+        }
+      } else {
+        setActiveFileId(null);
+        setOpenTabs([]);
+        if (editorRef.current) {
+          editorRef.current.setValue("");
+        }
+      }
+      return newFiles;
     } catch (err) {
       console.error("Failed to refresh project files:", err);
       return [];
@@ -488,15 +529,33 @@ const Workspace = () => {
     if (activeTab === "activity") loadActivities();
   }, [activeTab, loadVersions, loadActivities, loadMembersAndInvites]);
 
-  // 1. Establish Socket Connection
+  const addToastRef = useRef(addToast);
+  useEffect(() => { addToastRef.current = addToast; }, [addToast]);
+
+  const loadMembersAndInvitesRef = useRef(loadMembersAndInvites);
+  useEffect(() => { loadMembersAndInvitesRef.current = loadMembersAndInvites; }, [loadMembersAndInvites]);
+
+  const loadProjectAndFilesRef = useRef(loadProjectAndFiles);
+  useEffect(() => { loadProjectAndFilesRef.current = loadProjectAndFiles; }, [loadProjectAndFiles]);
+
+  const currentUserRef = useRef(currentUser);
+  useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
+
+  const navigateRef = useRef(navigate);
+  useEffect(() => { navigateRef.current = navigate; }, [navigate]);
+
+  // 1. Establish Socket Connection (Stable across component renders)
   useEffect(() => {
-    if (isLoadingProject || !project) return;
+    if (!projectId) return;
 
     const socketUrl = getSocketUrl();
 
     const socketInstance = io(socketUrl, {
       withCredentials: true,
       transports: ["websocket", "polling"],
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
     });
 
     socketInstance.on("connect", () => {
@@ -509,7 +568,7 @@ const Workspace = () => {
 
     socketInstance.on("connect_error", (err) => {
       console.error(`[IDE Workspace] Socket connection error: ${err.message}`);
-      addToast("WebSocket connection failed. Collaboration offline.", "error");
+      addToastRef.current?.("WebSocket connection failed. Collaboration offline.", "error");
     });
 
     // Receive full file code sync from server
@@ -590,8 +649,8 @@ const Workspace = () => {
 
     // Real-Time Team Management updates
     socketInstance.on("member-joined", () => {
-      loadMembersAndInvites();
-      addToast("A new collaborator joined the project workspace!", "info");
+      loadMembersAndInvitesRef.current?.();
+      addToastRef.current?.("A new collaborator joined the project workspace!", "info");
     });
 
     // Real-Time Project Files synchronization (create, rename, delete, upload, import)
@@ -620,24 +679,28 @@ const Workspace = () => {
           );
         }
 
-        const isOtherUser = data?.userId && String(data.userId) !== String(currentUser?.id || currentUser?._id);
+        if (data?.action === "restore") {
+          await refreshProjectFiles();
+        }
+
+        const isOtherUser = data?.userId && String(data.userId) !== String(currentUserRef.current?.id || currentUserRef.current?._id);
         if (isOtherUser) {
           if (data.action === "create" && data.file?.name) {
-            addToast(`Collaborator created "${data.file.name}"`, "info");
+            addToastRef.current?.(`Collaborator created "${data.file.name}"`, "info");
           } else if (data.action === "delete" && data.name) {
-            addToast(`Collaborator deleted "${data.name}"`, "info");
+            addToastRef.current?.(`Collaborator deleted "${data.name}"`, "info");
           } else if (data.action === "restore" && data.file?.name) {
-            addToast(`Collaborator restored "${data.file.name}"`, "info");
+            addToastRef.current?.(`Collaborator restored "${data.file.name}"`, "info");
           } else if (data.action === "permanent_delete" && data.name) {
-            addToast(`Collaborator permanently deleted "${data.name}"`, "info");
+            addToastRef.current?.(`Collaborator permanently deleted "${data.name}"`, "info");
           } else if (data.action === "empty_trash") {
-            addToast("Collaborator emptied the project trash", "info");
+            addToastRef.current?.("Collaborator emptied the project trash", "info");
           } else if (data.action === "rename" && data.file?.name) {
-            addToast(`Collaborator renamed "${data.oldName || "file"}" to "${data.file.name}"`, "info");
+            addToastRef.current?.(`Collaborator renamed "${data.oldName || "file"}" to "${data.file.name}"`, "info");
           } else if (data.action === "upload" && data.file?.name) {
-            addToast(`Collaborator uploaded "${data.file.name}"`, "info");
+            addToastRef.current?.(`Collaborator uploaded "${data.file.name}"`, "info");
           } else if (data.action === "upload-folder" || data.action === "import") {
-            addToast("Collaborator uploaded new project files", "info");
+            addToastRef.current?.("Collaborator uploaded new project files", "info");
           }
         }
       } catch (err) {
@@ -645,37 +708,63 @@ const Workspace = () => {
       }
     });
 
+    socketInstance.on("project-version-restored", async (data) => {
+      addToastRef.current?.(
+        `Project restored to Version v${data.versionNumber} ("${data.versionName || ""}") by ${data.restoredBy}`,
+        "info"
+      );
+      try {
+        const dataFiles = await fetchProjectFiles(projectId);
+        const restoredFiles = dataFiles.files || [];
+        setFiles(restoredFiles);
+        if (restoredFiles.length > 0) {
+          const matchingActive = restoredFiles.find(
+            (f) => String(f._id) === String(activeFileIdRef.current)
+          );
+          if (matchingActive) {
+            handleSelectFile(matchingActive);
+          } else {
+            const firstCode = restoredFiles.find((f) => !f.isFolder);
+            if (firstCode) handleSelectFile(firstCode);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to sync restored version files:", err);
+      }
+    });
+
     socketInstance.on("member-role-updated", ({ userId, role }) => {
-      loadMembersAndInvites();
-      loadProjectAndFiles();
-      const cId = String(currentUser?.id || currentUser?._id || "");
+      loadMembersAndInvitesRef.current?.();
+      loadProjectAndFilesRef.current?.();
+      const cId = String(currentUserRef.current?.id || currentUserRef.current?._id || "");
       if (cId && String(userId) === cId) {
         setLiveRole(role);
-        addToast(`Your workspace role was updated to: ${role}`, "info");
+        addToastRef.current?.(`Your workspace role was updated to: ${role}`, "info");
       }
     });
 
     socketInstance.on("member-removed", ({ userId, name }) => {
-      const cId = String(currentUser?.id || currentUser?._id || "");
+      const cId = String(currentUserRef.current?.id || currentUserRef.current?._id || "");
       if (cId && String(userId) === cId) {
-        addToast("You have been removed from this project workspace.", "error");
-        navigate("/dashboard");
+        addToastRef.current?.("You have been removed from this project workspace.", "error");
+        navigateRef.current?.("/dashboard");
       } else {
-        loadMembersAndInvites();
-        addToast(`Collaborator "${name}" was removed from the workspace.`, "info");
+        loadMembersAndInvitesRef.current?.();
+        addToastRef.current?.(`Collaborator "${name}" was removed from the workspace.`, "info");
       }
     });
 
     socketInstance.on("error", (err) => {
-      addToast(err.message || "Socket error occurred", "error");
+      addToastRef.current?.(err.message || "Socket error occurred", "error");
     });
 
     setSocket(socketInstance);
 
     return () => {
       socketInstance.disconnect();
+      setSocket(null);
     };
-  }, [isLoadingProject, project, projectId, addToast, loadMembersAndInvites, loadProjectAndFiles, currentUser, navigate]);
+  }, [projectId]);
 
   // 2. Tab & File Selection Handlers
   const handleSelectFile = async (file) => {
@@ -943,24 +1032,7 @@ const Workspace = () => {
     try {
       const data = await restoreVersionRequest(projectId, version._id);
       addToast(`Restored to Version ${version.versionNumber}`, "success");
-
-      // Reload project file structure
-      const fData = await fetchProjectFiles(projectId);
-      setFiles(fData.files || []);
-
-      // If active file is still open, reload its content
-      if (activeFileId) {
-        const fileData = await fetchFileContent(activeFileId);
-        if (editorRef.current) {
-          isApplyingSocketEdit.current = true;
-          editorRef.current.setValue(fileData.content || "");
-          isApplyingSocketEdit.current = false;
-        }
-        if (socket) {
-          socket.emit("force-file-sync", { fileId: activeFileId, code: fileData.content });
-        }
-      }
-
+      await refreshProjectFiles();
       loadVersions();
       loadActivities();
     } catch (err) {
@@ -1287,6 +1359,15 @@ const Workspace = () => {
             title="Manage Collaborators"
           >
             <Users size={16} />
+          </button>
+
+          <button
+            onClick={() => setIsVersionModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-200 text-xs font-semibold transition-colors cursor-pointer"
+            title="Version History & Project Snapshots"
+          >
+            <History size={14} className="text-indigo-400" />
+            <span className="hidden md:inline">Snapshots</span>
           </button>
 
           {isOwnerOrAdmin && (
@@ -1862,7 +1943,6 @@ const Workspace = () => {
               </div>
             )}
           </div>
-
         </div>
       </div>
 
@@ -1920,6 +2000,17 @@ const Workspace = () => {
           title={`Compare Version v${diffVersion.versionNumber}`}
         />
       )}
+
+      <VersionHistoryModal
+        isOpen={isVersionModalOpen}
+        onClose={() => setIsVersionModalOpen(false)}
+        projectId={projectId}
+        userRole={userRole}
+        onRestored={() => {
+          refreshProjectFiles();
+        }}
+        onOpenDiff={(ver) => setDiffVersion(ver)}
+      />
     </div>
   );
 };

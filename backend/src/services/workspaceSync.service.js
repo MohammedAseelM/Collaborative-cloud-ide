@@ -106,9 +106,9 @@ export const syncDiskToDatabase = async (projectId) => {
 
   await traverse(projectDir);
 
-  // If disk was completely empty but DB has nodes, populate disk from DB rather than wiping DB
-  if (diskPaths.size === 0 && existingNodes.length > 0) {
-    for (const [relPath, node] of dbPaths.entries()) {
+  // Ensure any active DB node missing from disk is synced to disk
+  for (const [relPath, node] of dbPaths.entries()) {
+    if (!diskPaths.has(relPath)) {
       try {
         const fullDiskPath = resolveProjectPath(projectDir, relPath);
         if (node.isFolder) {
@@ -120,16 +120,8 @@ export const syncDiskToDatabase = async (projectId) => {
         }
         diskPaths.add(relPath);
       } catch (err) {
-        logger.error(`Error populating empty disk from DB node ${relPath}:`, err);
+        logger.error(`Error syncing DB node to disk for ${relPath}:`, err);
       }
-    }
-    return;
-  }
-
-  // If disk has active files, any DB node missing from disk was deleted from disk -> delete from DB
-  for (const [relPath, node] of dbPaths.entries()) {
-    if (!diskPaths.has(relPath)) {
-      await FileNode.findByIdAndDelete(node._id);
     }
   }
 };

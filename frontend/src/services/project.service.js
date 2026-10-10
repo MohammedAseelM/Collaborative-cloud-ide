@@ -102,15 +102,24 @@ export const fetchVersions = async (projectId) => {
 };
 
 /**
- * Creates a new code snapshot version.
+ * Fetches detailed snapshot information including file tree & file contents.
  */
-export const saveVersionRequest = async (projectId, description) => {
-  const { data } = await api.post(`/projects/${projectId}/versions`, { description });
+export const fetchVersionDetails = async (projectId, versionId) => {
+  const { data } = await api.get(`/projects/${projectId}/versions/${versionId}`);
   return data;
 };
 
 /**
- * Restores project code to a previous snapshot state.
+ * Creates a new code snapshot version with name, description, and file hierarchy.
+ */
+export const saveVersionRequest = async (projectId, payload) => {
+  const body = typeof payload === "string" ? { description: payload } : (payload || {});
+  const { data } = await api.post(`/projects/${projectId}/versions`, body);
+  return data;
+};
+
+/**
+ * Restores project files and structure to a previous snapshot state.
  */
 export const restoreVersionRequest = async (projectId, versionId) => {
   const { data } = await api.post(`/projects/${projectId}/versions/${versionId}/restore`);

@@ -652,10 +652,67 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
 
   const projectDir = await syncProjectFilesToDisk(projectId);
 
-  // 1. Verify package.json exists
-  const pkgJsonPath = path.join(projectDir, "package.json");
+  // 1. Verify package.json exists or auto-scaffold if it's a web project
+  let pkgJsonPath = path.join(projectDir, "package.json");
   if (!fs.existsSync(pkgJsonPath)) {
     await syncProjectFilesToDisk(projectId);
+  }
+  if (!fs.existsSync(pkgJsonPath)) {
+    const projectFiles = await FileNode.find({ project: projectId, isDeleted: false }).select("name relativePath");
+    const hasWebFiles = projectFiles.some((f) => /\.(jsx|tsx|html|js|css)$/i.test(f.name));
+    if (hasWebFiles || project?.language === "javascript" || project?.language === "react") {
+      appendAndBroadcastLog(projectId, "📦 Auto-scaffolding package.json for web project...", io);
+      const defaultPkg = {
+        name: (project?.name || "cloud-project").toLowerCase().replace(/[^a-z0-9-]/g, "-"),
+        private: true,
+        version: "0.0.0",
+        type: "module",
+        scripts: {
+          dev: "vite --host 0.0.0.0",
+          build: "vite build",
+          preview: "vite preview --host 0.0.0.0",
+        },
+        dependencies: {
+          react: "^18.3.1",
+          "react-dom": "^18.3.1",
+        },
+        devDependencies: {
+          "@vitejs/plugin-react": "^4.3.4",
+          vite: "^6.0.0",
+        },
+      };
+      const pkgContent = JSON.stringify(defaultPkg, null, 2);
+      fs.writeFileSync(pkgJsonPath, pkgContent, "utf8");
+      await FileNode.create({
+        name: "package.json",
+        isFolder: false,
+        project: projectId,
+        parentId: null,
+        content: pkgContent,
+        relativePath: "package.json",
+        language: "json",
+        size: Buffer.byteLength(pkgContent, "utf8"),
+      }).catch(() => {});
+
+      const viteCfgPath = path.join(projectDir, "vite.config.js");
+      if (!fs.existsSync(viteCfgPath)) {
+        const viteContent = `import { defineConfig } from "vite";\nimport react from "@vitejs/plugin-react";\n\nexport default defineConfig({\n  plugins: [react()],\n  server: { host: "0.0.0.0", strictPort: false },\n});\n`;
+        fs.writeFileSync(viteCfgPath, viteContent, "utf8");
+        await FileNode.create({
+          name: "vite.config.js",
+          isFolder: false,
+          project: projectId,
+          parentId: null,
+          content: viteContent,
+          relativePath: "vite.config.js",
+          language: "javascript",
+          size: Buffer.byteLength(viteContent, "utf8"),
+        }).catch(() => {});
+      }
+      if (io) {
+        io.to(`project:${projectId}`).emit("files-updated", { action: "scaffold-package", projectId });
+      }
+    }
   }
   if (!fs.existsSync(pkgJsonPath)) {
     const errorMsg = "package.json not found in this project. Cannot start development server.";

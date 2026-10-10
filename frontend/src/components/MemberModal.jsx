@@ -180,6 +180,7 @@ export default function MemberModal({
   const [emailError, setEmailError] = useState("");
 
   // Version form states
+  const [versionName, setVersionName] = useState("");
   const [versionNote, setVersionNote] = useState("");
 
   // Loading states
@@ -395,7 +396,11 @@ export default function MemberModal({
     setIsSubmitting(true);
     try {
       await onBeforeSaveVersion?.();
-      await saveVersionRequest(projectId, versionNote.trim());
+      await saveVersionRequest(projectId, {
+        name: versionName.trim() || undefined,
+        description: versionNote.trim() || undefined,
+      });
+      setVersionName("");
       setVersionNote("");
       addToast("Version snapshot saved!", "success");
       loadVersions();
@@ -1029,25 +1034,34 @@ export default function MemberModal({
               {!isReadOnly && (
                 <form
                   onSubmit={handleSaveVersion}
-                  className="p-4 bg-indigo-950/20 border border-indigo-500/30 rounded-xl space-y-3"
+                  className="p-4 rounded-xl border space-y-3"
+                  style={{ backgroundColor: "#161b26", borderColor: "#273142" }}
                 >
                   <label className="block text-xs font-bold uppercase tracking-wider text-indigo-300">
                     Create Version Snapshot
                   </label>
-                  <div className="flex gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <input
-                      value={versionNote}
-                      onChange={(e) => setVersionNote(e.target.value)}
-                      placeholder="Describe this milestone snapshot (e.g. Added auth routing)..."
-                      className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                      value={versionName}
+                      onChange={(e) => setVersionName(e.target.value)}
+                      placeholder="Snapshot name (e.g. Added auth routing)..."
+                      className="bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
                     />
-                    <button
-                      type="submit"
-                      disabled={isSubmitting}
-                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl shadow-md disabled:opacity-50 cursor-pointer"
-                    >
-                      {isSubmitting ? "Saving..." : "Save Version"}
-                    </button>
+                    <div className="flex gap-2">
+                      <input
+                        value={versionNote}
+                        onChange={(e) => setVersionNote(e.target.value)}
+                        placeholder="Optional description / notes..."
+                        className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                      />
+                      <button
+                        type="submit"
+                        disabled={isSubmitting}
+                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl shadow-md disabled:opacity-50 cursor-pointer shrink-0"
+                      >
+                        {isSubmitting ? "Saving..." : "Save Snapshot"}
+                      </button>
+                    </div>
                   </div>
                 </form>
               )}
@@ -1066,24 +1080,42 @@ export default function MemberModal({
                     {versions.map((version) => (
                       <div
                         key={version._id}
-                        className="p-4 bg-slate-900/50 border border-slate-800 rounded-xl flex items-center justify-between"
+                        className="p-4 rounded-xl border flex items-center justify-between gap-4"
+                        style={{ backgroundColor: "#161b26", borderColor: "#273142" }}
                       >
-                        <div className="space-y-1">
-                          <div className="flex items-center space-x-2">
-                            <span className="px-2 py-0.5 text-xs font-mono font-bold bg-indigo-500/20 text-indigo-300 rounded-md border border-indigo-500/30">
+                        <div className="space-y-1 min-w-0 flex-1">
+                          <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                            <span className="px-2 py-0.5 text-xs font-mono font-bold bg-indigo-500/20 text-indigo-300 rounded-md border border-indigo-500/30 shrink-0">
                               v{version.versionNumber}
                             </span>
-                            <span className="text-xs text-slate-400">
-                              By {version.createdBy?.name || "Member"} ·{" "}
-                              {new Date(version.createdAt).toLocaleString()}
-                            </span>
+                            <h4
+                              className="text-sm font-bold truncate"
+                              style={{ color: "#ffffff" }}
+                            >
+                              {version.name || `Snapshot v${version.versionNumber}`}
+                            </h4>
                           </div>
-                          <p className="text-xs text-slate-200 font-medium">
-                            "{version.description || "Milestone snapshot"}"
-                          </p>
+                          {version.description && (
+                            <p
+                              className="text-xs truncate font-medium"
+                              style={{ color: "#cbd5e1" }}
+                            >
+                              "{version.description}"
+                            </p>
+                          )}
+                          <div className="flex items-center gap-2 text-[11px] text-slate-400 mt-1">
+                            <span>By {version.createdBy?.name || "Member"}</span>
+                            <span>· {new Date(version.createdAt).toLocaleString()}</span>
+                            {(version.totalFiles > 0 || version.totalFolders > 0) && (
+                              <span>
+                                · {version.totalFiles || 0} file{version.totalFiles === 1 ? "" : "s"}
+                                {version.totalFolders > 0 ? `, ${version.totalFolders} folder${version.totalFolders === 1 ? "" : "s"}` : ""}
+                              </span>
+                            )}
+                          </div>
                         </div>
 
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center space-x-2 shrink-0">
                           <button
                             onClick={() => onOpenDiff?.(version)}
                             className="px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg cursor-pointer"

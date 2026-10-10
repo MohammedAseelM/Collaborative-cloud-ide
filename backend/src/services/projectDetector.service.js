@@ -59,6 +59,13 @@ export const detectAndSaveProjectType = async (projectId) => {
       defaultPort = 5173;
     }
   } 
+  // 1b. React Projects without package.json
+  else if (filenames.some((f) => f.endsWith(".jsx") || f.endsWith(".tsx")) || filenames.includes("vite.config.js")) {
+    projectType = "react-vite";
+    startCommand = "npm run dev";
+    installCommand = "npm install";
+    defaultPort = 5173;
+  }
   // 2. Python Projects (requirements.txt, app.py, main.py)
   else if (filenames.includes("requirements.txt") || filenames.some((f) => f.endsWith(".py"))) {
     installCommand = filenames.includes("requirements.txt") ? "pip install -r requirements.txt" : "";
