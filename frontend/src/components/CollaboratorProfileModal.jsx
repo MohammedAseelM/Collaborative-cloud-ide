@@ -113,7 +113,13 @@ export const CollaboratorProfileModal = ({
         {/* Profile Details Container */}
         <div className="p-6 space-y-5">
           {/* Avatar & User Name Card */}
-          <div className="flex items-center gap-4 bg-gradient-to-r from-slate-950/80 via-indigo-950/30 to-slate-950/80 border border-indigo-500/25 p-4 rounded-xl shadow-md">
+          <div
+            className="flex items-center gap-4 border p-4 rounded-xl shadow-md"
+            style={{
+              backgroundColor: "#161b26",
+              borderColor: "#273142",
+            }}
+          >
             <div
               className="h-14 w-14 rounded-full flex items-center justify-center text-xl font-extrabold text-white uppercase shadow-lg relative shrink-0"
               style={{ backgroundColor: collaborator.color || "#3b82f6" }}
@@ -130,20 +136,40 @@ export const CollaboratorProfileModal = ({
 
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-indigo-200 truncate">
+                <h3
+                  className="text-base font-bold tracking-wide truncate"
+                  style={{ color: "#ffffff" }}
+                >
                   {collaborator.name || collaborator.username || "Collaborator"}
                 </h3>
                 {isSelf && (
-                  <span className="text-[10px] bg-indigo-950 text-indigo-400 font-bold px-1.5 py-0.5 rounded border border-indigo-800">
+                  <span
+                    className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                    style={{
+                      backgroundColor: "rgba(99, 102, 241, 0.25)",
+                      color: "#c7d2fe",
+                      border: "1px solid rgba(129, 140, 248, 0.4)",
+                    }}
+                  >
                     You
                   </span>
                 )}
               </div>
-              <p className="text-xs text-slate-400 truncate mt-0.5">
+              <p
+                className="text-xs font-medium truncate mt-0.5"
+                style={{ color: "#cbd5e1" }}
+              >
                 {collaborator.email || "Collaborator member"}
               </p>
               <div className="flex items-center gap-2 mt-2">
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400 bg-emerald-950/40 border border-emerald-800/40 px-2 py-0.5 rounded-full">
+                <span
+                  className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-0.5 rounded-full"
+                  style={{
+                    backgroundColor: "rgba(16, 185, 129, 0.2)",
+                    color: "#34d399",
+                    border: "1px solid rgba(52, 211, 153, 0.4)",
+                  }}
+                >
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                   {collaborator.isTyping
                     ? "Typing code..."

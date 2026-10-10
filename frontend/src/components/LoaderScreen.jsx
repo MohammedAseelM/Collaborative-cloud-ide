@@ -76,7 +76,7 @@ export const LoaderScreen = ({
         {/* Title & Subtitle */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-center gap-2">
-            <h2 className="text-xl font-extrabold tracking-tight bg-gradient-to-r from-white via-slate-200 to-indigo-300 bg-clip-text text-transparent">
+            <h2 className="text-xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-600 via-purple-600 to-cyan-600 dark:from-white dark:via-indigo-100 dark:to-cyan-300 bg-clip-text text-transparent">
               {title}
             </h2>
             <Sparkles size={16} className="text-amber-400 animate-pulse" />
@@ -91,7 +91,7 @@ export const LoaderScreen = ({
               <Cpu size={12} className="text-indigo-400 animate-pulse" />
               <span>SYSTEM BOOT</span>
             </span>
-            <span className="font-bold text-cyan-400">{progress}%</span>
+            <span className="font-bold text-cyan-600 dark:text-cyan-400">{progress}%</span>
           </div>
 
           {/* Bar track */}
@@ -120,14 +120,14 @@ export const LoaderScreen = ({
                 key={idx}
                 className={`flex items-center gap-2 text-[11px] transition-all duration-200 ${
                   idx === currentStepIndex
-                    ? "text-cyan-300 font-semibold translate-x-0.5"
-                    : "text-slate-500"
+                    ? "text-indigo-600 dark:text-cyan-300 font-bold translate-x-0.5"
+                    : "text-slate-500 dark:text-slate-400"
                 }`}
               >
                 {idx < currentStepIndex ? (
                   <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />
                 ) : (
-                  <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-ping shrink-0" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-indigo-600 dark:bg-cyan-400 animate-ping shrink-0" />
                 )}
                 <span className="truncate">{step}</span>
               </div>
