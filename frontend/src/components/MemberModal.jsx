@@ -53,11 +53,11 @@ import {
 import { useToast } from "../context/ToastContext";
 
 const ROLE_STYLES = {
-  Owner: "border-amber-500/30 bg-amber-500/10 text-amber-300",
-  Admin: "border-rose-500/30 bg-rose-500/10 text-rose-300",
-  Editor: "border-indigo-500/30 bg-indigo-500/10 text-indigo-300",
-  Viewer: "border-slate-700 bg-slate-800/60 text-slate-300",
-  Client: "border-cyan-500/30 bg-cyan-500/10 text-cyan-300",
+  Owner: "border-amber-500/40 bg-amber-500/15 text-amber-300",
+  Admin: "border-rose-500/40 bg-rose-500/15 text-rose-300",
+  Editor: "border-sky-500/40 bg-sky-500/15 text-sky-300",
+  Viewer: "border-slate-700 bg-slate-800/60 text-slate-200",
+  Client: "border-cyan-500/40 bg-cyan-500/15 text-cyan-300",
 };
 
 const PRIORITY_STYLES = {
@@ -651,7 +651,11 @@ export default function MemberModal({
                         return (
                           <div
                             key={member._id}
-                            className="flex items-center justify-between p-3.5 bg-gradient-to-r from-slate-900/90 via-slate-900/80 to-indigo-950/30 border border-indigo-500/25 hover:border-indigo-500/50 rounded-xl transition-all shadow-sm hover:shadow-indigo-500/10 group"
+                            className="flex items-center justify-between p-3.5 border hover:border-indigo-500/50 rounded-xl transition-all shadow-sm hover:shadow-indigo-500/10 group"
+                            style={{
+                              backgroundColor: "#161b26",
+                              borderColor: "#273142",
+                            }}
                           >
                             <div className="flex items-center space-x-3 min-w-0">
                               {/* Avatar with Online indicator */}
@@ -675,16 +679,31 @@ export default function MemberModal({
 
                               <div className="min-w-0">
                                 <div className="flex items-center space-x-1.5">
-                                  <p className="text-sm font-bold text-indigo-200 group-hover:text-indigo-100 transition-colors truncate">
+                                  <p
+                                    className="text-sm font-bold tracking-wide truncate transition-colors"
+                                    style={{ color: "#ffffff" }}
+                                  >
                                     {member.name}
                                   </p>
                                   {isSelf && (
-                                    <span className="px-1.5 py-0.2 text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded">
+                                    <span
+                                      className="px-1.5 py-0.5 text-[10px] font-semibold rounded"
+                                      style={{
+                                        backgroundColor: "rgba(99, 102, 241, 0.25)",
+                                        color: "#c7d2fe",
+                                        border: "1px solid rgba(129, 140, 248, 0.4)",
+                                      }}
+                                    >
                                       You
                                     </span>
                                   )}
                                 </div>
-                                <p className="text-xs text-slate-400 truncate">{member.email}</p>
+                                <p
+                                  className="text-xs font-medium truncate mt-0.5"
+                                  style={{ color: "#cbd5e1" }}
+                                >
+                                  {member.email}
+                                </p>
                               </div>
                             </div>
 
@@ -694,10 +713,15 @@ export default function MemberModal({
                               {isOwnerOrAdmin && (
                                 <button
                                   onClick={() => handleOpenAssignTask(member)}
-                                  className="flex items-center space-x-1 px-2.5 py-1 text-[11px] font-medium bg-indigo-600/15 hover:bg-indigo-600/25 text-indigo-300 border border-indigo-500/30 rounded-lg transition-colors cursor-pointer"
+                                  className="flex items-center space-x-1 px-2.5 py-1 text-[11px] font-medium rounded-lg transition-colors cursor-pointer"
+                                  style={{
+                                    backgroundColor: "rgba(99, 102, 241, 0.2)",
+                                    color: "#c7d2fe",
+                                    border: "1px solid rgba(129, 140, 248, 0.4)",
+                                  }}
                                   title={`Assign task to ${member.name}`}
                                 >
-                                  <CheckSquare className="w-3.5 h-3.5 text-indigo-400" />
+                                  <CheckSquare className="w-3.5 h-3.5" style={{ color: "#a5b4fc" }} />
                                   <span className="hidden sm:inline">Assign Task</span>
                                 </button>
                               )}
@@ -706,12 +730,27 @@ export default function MemberModal({
                                 <select
                                   value={member.role}
                                   onChange={(e) => handleChangeRole(member._id, e.target.value)}
-                                  className="text-xs bg-slate-900 dark:bg-slate-950 border border-indigo-500/30 text-indigo-200 px-2 py-1 rounded-lg focus:outline-none cursor-pointer"
+                                  className="text-xs px-2.5 py-1 rounded-lg focus:outline-none cursor-pointer font-medium"
+                                  style={{
+                                    backgroundColor: "#0f172a",
+                                    color: "#ffffff",
+                                    border: "1px solid #334155",
+                                  }}
                                 >
-                                  {isOwner && <option value="Admin">Admin</option>}
-                                  <option value="Editor">Editor</option>
-                                  <option value="Viewer">Viewer</option>
-                                  <option value="Client">Client</option>
+                                  {isOwner && (
+                                    <option value="Admin" style={{ backgroundColor: "#0f172a", color: "#ffffff" }}>
+                                      Admin
+                                    </option>
+                                  )}
+                                  <option value="Editor" style={{ backgroundColor: "#0f172a", color: "#ffffff" }}>
+                                    Editor
+                                  </option>
+                                  <option value="Viewer" style={{ backgroundColor: "#0f172a", color: "#ffffff" }}>
+                                    Viewer
+                                  </option>
+                                  <option value="Client" style={{ backgroundColor: "#0f172a", color: "#ffffff" }}>
+                                    Client
+                                  </option>
                                 </select>
                               ) : (
                                 <span
@@ -726,7 +765,10 @@ export default function MemberModal({
                               {canManage && (
                                 <button
                                   onClick={() => handleRemoveMember(member)}
-                                  className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
+                                  className="p-1.5 rounded-lg transition-colors cursor-pointer hover:bg-rose-500/15"
+                                  style={{ color: "#94a3b8" }}
+                                  onMouseEnter={(e) => (e.currentTarget.style.color = "#f43f5e")}
+                                  onMouseLeave={(e) => (e.currentTarget.style.color = "#94a3b8")}
                                   title="Remove Member"
                                 >
                                   <Trash2 className="w-4 h-4" />
@@ -765,13 +807,23 @@ export default function MemberModal({
                           {pendingInvites.map((invite) => (
                             <div
                               key={invite._id}
-                              className="flex items-center justify-between p-3 bg-gradient-to-r from-slate-900/80 via-slate-900/60 to-indigo-950/20 border border-indigo-500/20 rounded-xl transition-all hover:border-indigo-500/40"
+                              className="flex items-center justify-between p-3 rounded-xl border transition-all hover:border-indigo-500/40"
+                              style={{
+                                backgroundColor: "#161b26",
+                                borderColor: "#273142",
+                              }}
                             >
                               <div className="min-w-0">
-                                <p className="text-xs font-semibold text-indigo-200 truncate">
+                                <p
+                                  className="text-xs font-bold truncate"
+                                  style={{ color: "#ffffff" }}
+                                >
                                   {invite.email}
                                 </p>
-                                <div className="flex items-center space-x-2 text-[11px] text-slate-400 mt-0.5">
+                                <div
+                                  className="flex items-center space-x-2 text-[11px] mt-0.5"
+                                  style={{ color: "#cbd5e1" }}
+                                >
                                   <span className="text-amber-400 font-medium">● Pending</span>
                                   <span>· Role: {invite.role}</span>
                                   <span>
@@ -784,7 +836,12 @@ export default function MemberModal({
                                 <button
                                   onClick={() => handleResendInvite(invite._id, invite.email)}
                                   disabled={resendingInviteId === invite._id}
-                                  className="flex items-center space-x-1 px-2.5 py-1 text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 rounded-lg transition-colors cursor-pointer"
+                                  className="flex items-center space-x-1 px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                                  style={{
+                                    backgroundColor: "#1e293b",
+                                    color: "#c7d2fe",
+                                    border: "1px solid #334155",
+                                  }}
                                   title="Resend Invitation Email"
                                 >
                                   {resendingInviteId === invite._id ? (
