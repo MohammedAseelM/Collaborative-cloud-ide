@@ -29,7 +29,10 @@ body {
 .light [class~="bg-slate-900/20"],
 .light [class~="bg-slate-900/30"],
 .light [class~="bg-slate-900/40"],
-.light [class~="bg-slate-900/50"] { background-color: #ffffff !important; }
+.light [class~="bg-slate-900/50"],
+.light [class~="bg-slate-900/60"],
+.light [class~="bg-slate-900/80"],
+.light [class~="bg-slate-900/90"] { background-color: #ffffff !important; }
 .light [class~="bg-slate-800"] { background-color: #e2e8f0 !important; }
 
 .light [class~="border-slate-900"],

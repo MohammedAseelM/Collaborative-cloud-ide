@@ -59,6 +59,99 @@ const releaseCursorColor = (socket) => {
 const fileCodeCache = {}; // { [fileId]: { code: String, lastEditedBy: ObjectId, saveTimeout: Timeout } }
 const fileActiveCursors = new Map(); // { [fileId]: Map<socketId, cursorPayload> }
 
+// Connection Registry to track active socket sessions per user per project.
+// Multi-session architecture: closing 1 tab does NOT mark user offline if another tab is open.
+// Map<projectId, Map<userId, Set<socketId>>>
+const projectUserSockets = new Map();
+
+const trackUserSocketConnect = (projectId, userId, socketId) => {
+  const pId = String(projectId);
+  const uId = String(userId);
+  if (!projectUserSockets.has(pId)) {
+    projectUserSockets.set(pId, new Map());
+  }
+  const projectMap = projectUserSockets.get(pId);
+  if (!projectMap.has(uId)) {
+    projectMap.set(uId, new Set());
+  }
+  const socketSet = projectMap.get(uId);
+  const isFirstSocket = socketSet.size === 0;
+  socketSet.add(socketId);
+  return isFirstSocket;
+};
+
+const trackUserSocketDisconnect = (projectId, userId, socketId) => {
+  const pId = String(projectId);
+  const uId = String(userId);
+  const projectMap = projectUserSockets.get(pId);
+  if (!projectMap) return true;
+  const socketSet = projectMap.get(uId);
+  if (!socketSet) return true;
+  socketSet.delete(socketId);
+  if (socketSet.size === 0) {
+    projectMap.delete(uId);
+    if (projectMap.size === 0) {
+      projectUserSockets.delete(pId);
+    }
+    return true; // No remaining sessions for this user in this project
+  }
+  return false; // User still has other active sessions in this project
+};
+
+/**
+ * Revalidate project membership and role permissions from the database.
+ * Prevents stale sockets from continuing to access project data after removal or role change.
+ */
+export const verifySocketMembership = async (socket, requiredMinRole = "Viewer") => {
+  if (!socket.projectId || !socket.user?._id) return false;
+  try {
+    const project = await Project.findById(socket.projectId).select("owner members memberRoles");
+    if (!project) return false;
+
+    const userIdStr = socket.user._id.toString();
+    const isMember = project.members.some((m) => m.toString() === userIdStr);
+    if (!isMember) {
+      // Invalidate stale socket immediately
+      const oldProjectId = socket.projectId;
+      socket.projectId = null;
+      socket.projectRole = null;
+      if (socket.activeFileId) {
+        socket.leave(`file:${socket.activeFileId}`);
+        socket.activeFileId = null;
+      }
+      socket.leave(`project:${oldProjectId}`);
+      socket.emit("member-removed", {
+        projectId: oldProjectId,
+        userId: socket.user._id,
+        name: socket.user.name,
+        message: "Your access to this project has been revoked.",
+      });
+      return false;
+    }
+
+    // Refresh live role from database
+    const currentRole = project.owner.toString() === userIdStr
+      ? "Owner"
+      : project.memberRoles?.get(userIdStr) || "Editor";
+    socket.projectRole = currentRole;
+
+    const roleLevels = {
+      Owner: 4,
+      Admin: 3,
+      Editor: 2,
+      Viewer: 1,
+      Client: 1,
+    };
+    const userLevel = roleLevels[currentRole] || 1;
+    const requiredLevel = roleLevels[requiredMinRole] || 1;
+
+    return userLevel >= requiredLevel;
+  } catch (err) {
+    logger.error(`Error verifying socket membership: ${err.message}`);
+    return false;
+  }
+};
+
 const parseCookies = (cookieHeader) => {
   if (!cookieHeader) return {};
   return cookieHeader.split(";").reduce((acc, cookieStr) => {
@@ -167,9 +260,11 @@ const saveCachedFileToDB = async (fileId) => {
 };
 
 export const registerSocketHandlers = (io) => {
+  io.broadcastProjectPresence = (projectId) => broadcastProjectPresence(io, projectId);
   io.use(socketProtect);
 
   io.on("connection", (socket) => {
+    socket.stopProjectTerminal = () => stopProjectTerminal(socket);
     logger.info(`Socket connected: ${socket.id} (User: ${socket.user.name})`);
 
     // Join user's personal notification channel
@@ -192,6 +287,7 @@ export const registerSocketHandlers = (io) => {
           return;
         }
 
+        const isFirstConnection = trackUserSocketConnect(projectId, socket.user._id, socket.id);
         socket.projectId = projectId;
         socket.projectRole = project.owner.toString() === socket.user._id.toString()
           ? "Owner"
@@ -202,12 +298,16 @@ export const registerSocketHandlers = (io) => {
         // Notify other room members of the presence change
         await broadcastProjectPresence(io, projectId);
 
-        // Log join activity
-        await Activity.create({
-          project: projectId,
-          user: socket.user._id,
-          type: "JOIN",
-        });
+        // Log join activity only on user's first connection session
+        if (isFirstConnection) {
+          try {
+            await Activity.create({
+              project: projectId,
+              user: socket.user._id,
+              type: "JOIN",
+            });
+          } catch (actErr) {}
+        }
 
       } catch (err) {
         logger.error(`Error joining project socket: ${err.message}`);
@@ -335,7 +435,19 @@ export const registerSocketHandlers = (io) => {
 
     // 3. Sync Real-Time Keystroke edits in File room
     socket.on("code-change", async ({ fileId, rangeOffset, rangeLength, text }) => {
-      if (!["Owner", "Admin", "Editor"].includes(socket.projectRole)) {
+      // Validate incoming payload bounds and type
+      if (typeof text !== "string" || text.length > 500_000) {
+        socket.emit("error", { message: "Invalid or oversized code change payload" });
+        return;
+      }
+      if (typeof rangeOffset !== "number" || rangeOffset < 0 || typeof rangeLength !== "number" || rangeLength < 0) {
+        socket.emit("error", { message: "Invalid code edit range" });
+        return;
+      }
+
+      // Revalidate membership and role dynamically from DB
+      const isAuthorized = await verifySocketMembership(socket, "Editor");
+      if (!isAuthorized) {
         socket.emit("error", { message: "Your role has read-only access to this project" });
         return;
       }
@@ -409,7 +521,10 @@ export const registerSocketHandlers = (io) => {
     });
 
     // 4. Cursor position & selection range tracking in File room
-    socket.on("cursor-move", (payload = {}) => {
+    socket.on("cursor-move", async (payload = {}) => {
+      const isAuthorized = await verifySocketMembership(socket, "Viewer");
+      if (!isAuthorized) return;
+
       const {
         fileId,
         cursorPosition,
@@ -429,8 +544,10 @@ export const registerSocketHandlers = (io) => {
         socket.join(`file:${targetFileId}`);
       }
 
-      const cLine = cursorLine ?? cursorPosition?.lineNumber;
-      const cCol = cursorColumn ?? cursorPosition?.column;
+      const rawLine = cursorLine ?? cursorPosition?.lineNumber;
+      const rawCol = cursorColumn ?? cursorPosition?.column;
+      const cLine = (Number.isInteger(rawLine) && rawLine > 0) ? rawLine : 1;
+      const cCol = (Number.isInteger(rawCol) && rawCol > 0) ? rawCol : 1;
 
       const selStart = selectionStart || (selection ? {
         lineNumber: selection.startLineNumber,
@@ -453,7 +570,7 @@ export const registerSocketHandlers = (io) => {
         selectionStart: selStart,
         selectionEnd: selEnd,
         // Legacy & extended cursor fields
-        cursor: cLine ? { lineNumber: cLine, column: cCol } : cursorPosition,
+        cursor: { lineNumber: cLine, column: cCol },
         selection: selection || (selStart && selEnd ? {
           startLineNumber: selStart.lineNumber,
           startColumn: selStart.column,
@@ -479,7 +596,10 @@ export const registerSocketHandlers = (io) => {
     });
 
     // 4.5 Selection Change Tracking in File room
-    socket.on("selection-change", (payload = {}) => {
+    socket.on("selection-change", async (payload = {}) => {
+      const isAuthorized = await verifySocketMembership(socket, "Viewer");
+      if (!isAuthorized) return;
+
       const { fileId, selectionStart, selectionEnd, selection } = payload;
       const rawTarget = fileId || socket.activeFileId;
       const targetFileId = rawTarget ? rawTarget.toString() : null;
@@ -530,7 +650,10 @@ export const registerSocketHandlers = (io) => {
     });
 
     // 4.6 Mouse Pointer Movement Tracking in File room
-    socket.on("mouse-move", (payload = {}) => {
+    socket.on("mouse-move", async (payload = {}) => {
+      const isAuthorized = await verifySocketMembership(socket, "Viewer");
+      if (!isAuthorized) return;
+
       const { fileId, mouseX, mouseY, lineNumber, column, offsetX, offsetY } = payload;
       const rawTarget = fileId || socket.activeFileId;
       const targetFileId = rawTarget ? rawTarget.toString() : null;
@@ -563,7 +686,11 @@ export const registerSocketHandlers = (io) => {
     });
 
     // 5. Typing indicators in File room
-    socket.on("typing-status", ({ fileId, isTyping }) => {
+    socket.on("typing-status", async ({ fileId, isTyping }) => {
+      if (typeof isTyping !== "boolean") return;
+      const isAuthorized = await verifySocketMembership(socket, "Viewer");
+      if (!isAuthorized) return;
+
       const rawTarget = fileId || socket.activeFileId;
       const targetFileId = rawTarget ? rawTarget.toString() : null;
       if (!targetFileId) return;
@@ -578,8 +705,9 @@ export const registerSocketHandlers = (io) => {
     });
 
     // 6. Force File Sync (e.g. on Version Restore or manual file revert)
-    socket.on("force-file-sync", ({ fileId, code }) => {
-      if (!["Owner", "Admin", "Editor"].includes(socket.projectRole)) {
+    socket.on("force-file-sync", async ({ fileId, code }) => {
+      const isAuthorized = await verifySocketMembership(socket, "Editor");
+      if (!isAuthorized) {
         socket.emit("error", { message: "Your role has read-only access to this project" });
         return;
       }
@@ -610,7 +738,13 @@ export const registerSocketHandlers = (io) => {
         const projectId = socket.projectId;
         if (!projectId) return;
 
-        if (!text || text.trim() === "") return;
+        if (typeof text !== "string" || text.trim() === "" || text.length > 5_000) return;
+
+        const isAuthorized = await verifySocketMembership(socket, "Viewer");
+        if (!isAuthorized) {
+          socket.emit("error", { message: "Not authorized to send messages in this project" });
+          return;
+        }
 
         const message = await Message.create({
           project: projectId,
@@ -656,23 +790,11 @@ export const registerSocketHandlers = (io) => {
         // here as well so opening the terminal immediately after the page
         // loads cannot leave it without a running shell.
         if (!socket.projectId) {
-          const project = await Project.findById(projectId);
-          const isMember = project?.members.some((member) => member.toString() === socket.user._id.toString());
-          if (!isMember) {
-            socket.emit("project-terminal-error", { message: "You do not have access to this project terminal." });
-            return;
-          }
           socket.projectId = projectId;
-          socket.projectRole = project.owner.toString() === socket.user._id.toString()
-            ? "Owner"
-            : project.memberRoles?.get(socket.user._id.toString()) || "Editor";
-          socket.join(`project:${projectId}`);
         }
-        if (socket.projectId !== projectId) {
-          socket.emit("project-terminal-error", { message: "This terminal belongs to a different project." });
-          return;
-        }
-        if (socket.projectRole === "Viewer" || socket.projectRole === "Client") {
+
+        const isAuthorized = await verifySocketMembership(socket, "Editor");
+        if (!isAuthorized) {
           socket.emit("project-terminal-error", { message: "Your project role cannot run terminal commands." });
           return;
         }
@@ -710,7 +832,12 @@ export const registerSocketHandlers = (io) => {
       }
     });
 
-    socket.on("project-terminal:input", ({ data } = {}) => {
+    socket.on("project-terminal:input", async ({ data } = {}) => {
+      const isAuthorized = await verifySocketMembership(socket, "Editor");
+      if (!isAuthorized) {
+        socket.emit("project-terminal-error", { message: "Your project role cannot run terminal commands." });
+        return;
+      }
       if (!socket.projectTerminalProcess?.stdin?.writable || typeof data !== "string") return;
       if (data.length > 8_192) {
         socket.emit("project-terminal-error", { message: "Terminal input is too large." });
@@ -728,7 +855,8 @@ export const registerSocketHandlers = (io) => {
           socket.emit("code-execution-error", { message: "Open the project before running code." });
           return;
         }
-        if (!["Owner", "Admin", "Editor"].includes(socket.projectRole)) {
+        const isAuthorized = await verifySocketMembership(socket, "Editor");
+        if (!isAuthorized) {
           socket.emit("code-execution-error", { message: "Your project role cannot run code." });
           return;
         }
@@ -949,15 +1077,18 @@ export const registerSocketHandlers = (io) => {
         await broadcastProjectPresence(io, projectId);
       }
 
-      // Log leave activity
-      try {
-        await Activity.create({
-          project: projectId,
-          user: socket.user._id,
-          type: "LEAVE",
-        });
-      } catch (err) {
-        logger.error(`Error logging socket leave: ${err.message}`);
+      // Log leave activity only if this was the user's last connection to this project
+      const isLastConnection = trackUserSocketDisconnect(projectId, socket.user?._id, socket.id);
+      if (isLastConnection) {
+        try {
+          await Activity.create({
+            project: projectId,
+            user: socket.user._id,
+            type: "LEAVE",
+          });
+        } catch (err) {
+          logger.error(`Error logging socket leave: ${err.message}`);
+        }
       }
     });
   });

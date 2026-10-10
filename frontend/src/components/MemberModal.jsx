@@ -651,13 +651,13 @@ export default function MemberModal({
                         return (
                           <div
                             key={member._id}
-                            className="flex items-center justify-between p-3.5 bg-slate-900/60 border border-slate-800 hover:border-slate-700 rounded-xl transition-all"
+                            className="flex items-center justify-between p-3.5 bg-gradient-to-r from-slate-900/90 via-slate-900/80 to-indigo-950/30 border border-indigo-500/25 hover:border-indigo-500/50 rounded-xl transition-all shadow-sm hover:shadow-indigo-500/10 group"
                           >
                             <div className="flex items-center space-x-3 min-w-0">
                               {/* Avatar with Online indicator */}
                               <div className="relative shrink-0">
                                 <div
-                                  className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold text-white uppercase ${getAvatarColor(
+                                  className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold text-white uppercase shadow-md ${getAvatarColor(
                                     member.name
                                   )}`}
                                 >
@@ -667,7 +667,7 @@ export default function MemberModal({
                                   className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-slate-950 ${
                                     isOnline
                                       ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,.8)]"
-                                      : "bg-slate-600"
+                                      : "bg-slate-500"
                                   }`}
                                   title={isOnline ? "Online Now" : "Offline"}
                                 />
@@ -675,11 +675,11 @@ export default function MemberModal({
 
                               <div className="min-w-0">
                                 <div className="flex items-center space-x-1.5">
-                                  <p className="text-sm font-semibold text-slate-200 truncate">
+                                  <p className="text-sm font-bold text-indigo-200 group-hover:text-indigo-100 transition-colors truncate">
                                     {member.name}
                                   </p>
                                   {isSelf && (
-                                    <span className="px-1.5 py-0.2 text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 rounded">
+                                    <span className="px-1.5 py-0.2 text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded">
                                       You
                                     </span>
                                   )}
@@ -706,7 +706,7 @@ export default function MemberModal({
                                 <select
                                   value={member.role}
                                   onChange={(e) => handleChangeRole(member._id, e.target.value)}
-                                  className="text-xs bg-slate-950 border border-slate-800 text-slate-200 px-2 py-1 rounded-lg focus:outline-none cursor-pointer"
+                                  className="text-xs bg-slate-900 dark:bg-slate-950 border border-indigo-500/30 text-indigo-200 px-2 py-1 rounded-lg focus:outline-none cursor-pointer"
                                 >
                                   {isOwner && <option value="Admin">Admin</option>}
                                   <option value="Editor">Editor</option>
@@ -765,10 +765,10 @@ export default function MemberModal({
                           {pendingInvites.map((invite) => (
                             <div
                               key={invite._id}
-                              className="flex items-center justify-between p-3 bg-slate-900/40 border border-slate-800/80 rounded-xl"
+                              className="flex items-center justify-between p-3 bg-gradient-to-r from-slate-900/80 via-slate-900/60 to-indigo-950/20 border border-indigo-500/20 rounded-xl transition-all hover:border-indigo-500/40"
                             >
                               <div className="min-w-0">
-                                <p className="text-xs font-semibold text-slate-200 truncate">
+                                <p className="text-xs font-semibold text-indigo-200 truncate">
                                   {invite.email}
                                 </p>
                                 <div className="flex items-center space-x-2 text-[11px] text-slate-400 mt-0.5">
@@ -940,7 +940,7 @@ export default function MemberModal({
                               <span className="w-4 h-4 rounded-full bg-indigo-600 flex items-center justify-center text-[9px] font-bold text-white uppercase">
                                 {task.assignedTo?.name ? task.assignedTo.name[0] : "?"}
                               </span>
-                              <span className="font-medium text-slate-200">
+                              <span className="font-semibold text-indigo-200">
                                 {task.assignedTo?.name || "Unknown"}
                               </span>
                             </div>

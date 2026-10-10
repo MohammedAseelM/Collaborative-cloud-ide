@@ -149,6 +149,7 @@ test("Workspace Files & Folders System Tests", async (t) => {
     assert.strictEqual(data.success, true);
 
     const exists = await FileNode.findById(file._id);
-    assert.strictEqual(exists, null);
+    assert.ok(exists, "Soft-deleted file should remain in database");
+    assert.strictEqual(exists.isDeleted, true);
   });
 });

@@ -22,6 +22,7 @@ const activitySchema = new mongoose.Schema(
       enum: [
         "CREATE",
         "EDIT",
+        "DELETE",
         "RUN",
         "SAVE_VERSION",
         "RESTORE_VERSION",
@@ -29,6 +30,7 @@ const activitySchema = new mongoose.Schema(
         "LEAVE",
         "ADD_MEMBER",
         "REMOVE_MEMBER",
+        "CHANGE_ROLE",
       ],
     },
     details: {

@@ -28,8 +28,8 @@ export const syncDiskToDatabase = async (projectId) => {
     fs.mkdirSync(projectDir, { recursive: true });
   }
 
-  // Read all existing DB nodes
-  const existingNodes = await FileNode.find({ project: projectId });
+  // Read all existing active DB nodes (exclude soft-deleted)
+  const existingNodes = await FileNode.find({ project: projectId, isDeleted: { $ne: true } });
   const nodeMap = new Map();
   for (const node of existingNodes) {
     nodeMap.set(node._id.toString(), node);

@@ -7,6 +7,7 @@ import path from "path";
 import FileNode from "../models/file.model.js";
 import Project from "../models/project.model.js";
 import Activity from "../models/activity.model.js";
+import Version from "../models/version.model.js";
 import { findMemberProjectOrThrow, verifyProjectPermission } from "./project.controller.js";
 import {
   detectProjectLanguage,
@@ -94,7 +95,7 @@ export const getProjectFiles = async (req, res, next) => {
     // Sync disk changes to database first
     await syncDiskToDatabase(projectId);
 
-    const files = await FileNode.find({ project: projectId }).sort({ isFolder: -1, name: 1 });
+    const files = await FileNode.find({ project: projectId, isDeleted: { $ne: true } }).sort({ isFolder: -1, name: 1 });
 
     res.status(200).json({
       success: true,
@@ -126,11 +127,12 @@ export const createFileNode = async (req, res, next) => {
       throw error;
     }
 
-    // Check if node with same name already exists in this folder level
+    // Check if node with same name already exists in this folder level (active files)
     const existing = await FileNode.findOne({
       project: projectId,
       name,
       parentId: parentId || null,
+      isDeleted: { $ne: true },
     });
 
     if (existing) {
@@ -139,9 +141,11 @@ export const createFileNode = async (req, res, next) => {
       throw error;
     }
 
+    const isFolderBool = Boolean(isFolder);
+
     // Assign starter template if it is a file and content was not supplied
     let content = "";
-    if (!isFolder) {
+    if (!isFolderBool) {
       if (customContent !== undefined) {
         content = customContent;
       } else {
@@ -155,11 +159,11 @@ export const createFileNode = async (req, res, next) => {
 
     const node = await FileNode.create({
       name,
-      isFolder,
+      isFolder: isFolderBool,
       project: projectId,
       parentId: parentId || null,
       relativePath,
-      content: isFolder ? undefined : content,
+      content: isFolderBool ? undefined : content,
     });
 
     // Write to disk immediately so it exists on physical filesystem
@@ -222,11 +226,12 @@ export const renameFileNode = async (req, res, next) => {
     verifyProjectPermission(project, req.user._id, "Editor");
     assertProjectEditable(node.project, req.user);
 
-    // Verify name uniqueness in parent directory
+    // Verify name uniqueness in parent directory among active files
     const existing = await FileNode.findOne({
       project: node.project,
       name,
       parentId: node.parentId,
+      isDeleted: { $ne: true },
       _id: { $ne: fileId },
     });
 
@@ -299,27 +304,32 @@ export const renameFileNode = async (req, res, next) => {
 };
 
 /**
- * Recursive helper to delete folder nodes and all nested child records in MongoDB.
+ * Helper to soft-delete folder nodes and all nested child records in MongoDB.
  */
-const deleteRecursively = async (nodeId) => {
-  const children = await FileNode.find({ parentId: nodeId });
+const softDeleteRecursively = async (nodeId, userId) => {
+  const children = await FileNode.find({ parentId: nodeId, isDeleted: { $ne: true } });
   for (const child of children) {
-    await deleteRecursively(child._id);
+    await softDeleteRecursively(child._id, userId);
   }
-  await FileNode.findByIdAndDelete(nodeId);
+  await FileNode.findByIdAndUpdate(nodeId, {
+    isDeleted: true,
+    deletedAt: new Date(),
+    deletedBy: userId,
+  });
 };
 
 /**
  * @route   DELETE /api/files/:fileId
- * @desc    Delete a file or folder (recursively cleans subfolders)
- * @access  Private (members only)
+ * @desc    Soft-delete a file or folder (recursively marks subfolders as deleted)
+ *          Stores a recoverable snapshot in Version before deletion.
+ * @access  Private (members with Editor permission)
  */
 export const deleteFileNode = async (req, res, next) => {
   try {
     const { fileId } = req.params;
 
     const node = await FileNode.findById(fileId);
-    if (!node) {
+    if (!node || node.isDeleted) {
       const error = new Error("File or folder not found");
       error.statusCode = 404;
       throw error;
@@ -333,18 +343,35 @@ export const deleteFileNode = async (req, res, next) => {
     const deletedName = node.name;
     const wasFolder = node.isFolder;
 
-    // 1. Delete from physical disk first so syncDiskToDatabase won't resurrect it
+    // 1. Store recoverable version snapshot before destructive delete
+    if (!wasFolder) {
+      try {
+        const latestVersion = await Version.findOne({ project: node.project }).sort({ versionNumber: -1 });
+        const nextVersionNumber = latestVersion ? latestVersion.versionNumber + 1 : 1;
+        await Version.create({
+          project: node.project,
+          code: node.content || "",
+          versionNumber: nextVersionNumber,
+          description: `Snapshot before deleting ${deletedName}`,
+          createdBy: req.user._id,
+        });
+      } catch (snapErr) {
+        logger.warn(`Could not save pre-deletion snapshot for ${deletedName}: ${snapErr.message}`);
+      }
+    }
+
+    // 2. Delete from physical disk so workspace sync won't pick it up
     const targetRelPath = node.relativePath || node.name;
     await deleteNodeFromDisk(project.owner, node.project, targetRelPath);
 
-    // 2. Recursively clean up subfolders and child file nodes in MongoDB
-    await deleteRecursively(fileId);
+    // 3. Soft delete in MongoDB
+    await softDeleteRecursively(fileId, req.user._id);
 
-    // Log delete activity
+    // 4. Log delete activity
     await Activity.create({
       project: node.project,
       user: req.user._id,
-      type: "EDIT",
+      type: "DELETE",
       details: { action: "delete", name: deletedName, type: wasFolder ? "folder" : "file" },
     });
 
@@ -362,6 +389,128 @@ export const deleteFileNode = async (req, res, next) => {
     res.status(200).json({
       success: true,
       message: `${wasFolder ? "Folder" : "File"} deleted successfully`,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @route   POST /api/files/:fileId/restore
+ * @desc    Restore a soft-deleted file or folder
+ * @access  Private (members with Editor permission)
+ */
+export const restoreFileNode = async (req, res, next) => {
+  try {
+    const { fileId } = req.params;
+
+    const node = await FileNode.findById(fileId);
+    if (!node) {
+      const error = new Error("File or folder not found");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (!node.isDeleted) {
+      const error = new Error("File is not deleted");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const project = await findMemberProjectOrThrow(node.project, req.user._id);
+    verifyProjectPermission(project, req.user._id, "Editor");
+    assertProjectEditable(node.project, req.user);
+
+    // Handle concurrent changes & filename conflicts safely
+    const existing = await FileNode.findOne({
+      project: node.project,
+      name: node.name,
+      parentId: node.parentId,
+      isDeleted: { $ne: true },
+    });
+
+    let restoredName = node.name;
+    if (existing) {
+      const ext = path.extname(node.name);
+      const base = path.basename(node.name, ext);
+      restoredName = `${base} (restored)${ext}`;
+      node.name = restoredName;
+    }
+
+    const relativePath = await resolveNodeRelativePath(restoredName, node.parentId, node.project);
+    node.relativePath = relativePath;
+    node.isDeleted = false;
+    node.deletedAt = null;
+    node.deletedBy = null;
+    node.updatedBy = req.user._id;
+    await node.save();
+
+    // Recreate file/folder on physical disk
+    await writeNodeToDisk(project.owner, node.project, relativePath, node.isFolder, node.content || "");
+
+    // Record restoration as a new activity and new version snapshot per requirement
+    const latestVersion = await Version.findOne({ project: node.project }).sort({ versionNumber: -1 });
+    const versionNumber = latestVersion ? latestVersion.versionNumber + 1 : 1;
+    await Version.create({
+      project: node.project,
+      code: node.content || "",
+      versionNumber,
+      description: `Restored ${restoredName} (v${versionNumber})`,
+      createdBy: req.user._id,
+    });
+
+    await Activity.create({
+      project: node.project,
+      user: req.user._id,
+      type: "RESTORE_VERSION",
+      details: {
+        action: "restore",
+        name: restoredName,
+        type: node.isFolder ? "folder" : "file",
+        versionNumber,
+      },
+    });
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`project:${node.project.toString()}`).emit("files-updated", {
+        action: "restore",
+        file: node,
+        fileId: node._id,
+        name: restoredName,
+        isFolder: node.isFolder,
+        userId: req.user._id,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `${node.isFolder ? "Folder" : "File"} restored successfully`,
+      file: node,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @route   GET /api/projects/:projectId/trash
+ * @desc    Get all soft-deleted files in a project for recovery
+ * @access  Private (members only)
+ */
+export const getTrashFiles = async (req, res, next) => {
+  try {
+    const { projectId } = req.params;
+    await findMemberProjectOrThrow(projectId, req.user._id);
+
+    const deletedFiles = await FileNode.find({ project: projectId, isDeleted: true })
+      .populate("deletedBy", "name email")
+      .sort({ deletedAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: deletedFiles.length,
+      files: deletedFiles,
     });
   } catch (error) {
     next(error);

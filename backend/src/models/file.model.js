@@ -51,6 +51,20 @@ const fileNodeSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     },
+    isDeleted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
+    deletedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
   },
   {
     timestamps: true,
@@ -58,8 +72,11 @@ const fileNodeSchema = new mongoose.Schema(
 );
 
 // Indexes to speed up queries for files in a project or folder
-fileNodeSchema.index({ project: 1, parentId: 1 });
-fileNodeSchema.index({ project: 1, name: 1, parentId: 1 }, { unique: true });
+fileNodeSchema.index({ project: 1, parentId: 1, isDeleted: 1 });
+fileNodeSchema.index(
+  { project: 1, name: 1, parentId: 1 },
+  { unique: true, partialFilterExpression: { isDeleted: false } }
+);
 
 const FileNode = mongoose.model("FileNode", fileNodeSchema);
 

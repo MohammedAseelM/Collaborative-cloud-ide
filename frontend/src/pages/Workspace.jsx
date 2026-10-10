@@ -316,12 +316,16 @@ const Workspace = () => {
   const [isSavingVersion, setIsSavingVersion] = useState(false);
   const [versionNote, setVersionNote] = useState("");
 
+  const [liveRole, setLiveRole] = useState(null);
+
   const userRole = useMemo(() => {
+    if (liveRole) return liveRole;
     if (!project || !currentUser) return "Viewer";
-    const ownerId = project.owner?._id || project.owner;
-    if (ownerId === currentUser.id) return "Owner";
-    return project.memberRoles?.[currentUser.id] || "Editor";
-  }, [project, currentUser]);
+    const ownerId = String(project.owner?._id || project.owner || "");
+    const cId = String(currentUser.id || currentUser._id || "");
+    if (ownerId && cId && ownerId === cId) return "Owner";
+    return project.memberRoles?.[cId] || project.memberRoles?.[currentUser.id] || "Editor";
+  }, [liveRole, project, currentUser]);
 
   const isViewer = userRole === "Viewer" || userRole === "Client";
   const isOwner = userRole === "Owner";
@@ -622,6 +626,8 @@ const Workspace = () => {
             addToast(`Collaborator created "${data.file.name}"`, "info");
           } else if (data.action === "delete" && data.name) {
             addToast(`Collaborator deleted "${data.name}"`, "info");
+          } else if (data.action === "restore" && data.file?.name) {
+            addToast(`Collaborator restored "${data.file.name}"`, "info");
           } else if (data.action === "rename" && data.file?.name) {
             addToast(`Collaborator renamed "${data.oldName || "file"}" to "${data.file.name}"`, "info");
           } else if (data.action === "upload" && data.file?.name) {
@@ -638,13 +644,16 @@ const Workspace = () => {
     socketInstance.on("member-role-updated", ({ userId, role }) => {
       loadMembersAndInvites();
       loadProjectAndFiles();
-      if (userId === currentUser?.id) {
+      const cId = String(currentUser?.id || currentUser?._id || "");
+      if (cId && String(userId) === cId) {
+        setLiveRole(role);
         addToast(`Your workspace role was updated to: ${role}`, "info");
       }
     });
 
     socketInstance.on("member-removed", ({ userId, name }) => {
-      if (userId === currentUser?.id) {
+      const cId = String(currentUser?.id || currentUser?._id || "");
+      if (cId && String(userId) === cId) {
         addToast("You have been removed from this project workspace.", "error");
         navigate("/dashboard");
       } else {

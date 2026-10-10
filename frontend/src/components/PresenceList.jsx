@@ -63,7 +63,7 @@ export const PresenceList = ({ presenceList = [], compact = false, onSelectColla
           <div
             key={u.userId}
             onClick={() => onSelectCollaborator && onSelectCollaborator(u)}
-            className="p-2 rounded-xl border border-slate-900 bg-slate-900/30 flex items-center gap-2.5 transition-all hover:bg-slate-900/60 cursor-pointer"
+            className="p-2 rounded-xl border border-indigo-500/20 bg-slate-900/60 flex items-center gap-2.5 transition-all hover:bg-slate-900/90 hover:border-indigo-500/40 cursor-pointer"
           >
             <div
               className="h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold text-white uppercase shrink-0"
@@ -74,7 +74,7 @@ export const PresenceList = ({ presenceList = [], compact = false, onSelectColla
 
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5">
-                <span className="text-xs font-semibold text-slate-200 truncate">
+                <span className="text-xs font-semibold text-indigo-200 truncate">
                   {u.name}
                 </span>
                 {u.isSelf && (

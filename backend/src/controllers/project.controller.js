@@ -6,6 +6,7 @@ import Project from "../models/project.model.js";
 import User from "../models/user.model.js";
 import FileNode from "../models/file.model.js";
 import Activity from "../models/activity.model.js";
+import Notification from "../models/notification.model.js";
 import escapeRegex from "../utils/escapeRegex.js";
 import fs from "fs";
 import path from "path";
@@ -377,22 +378,100 @@ export const removeMember = async (req, res, next) => {
     }
     await project.save();
 
-    // Log activity
+    // Log durable activity
     const removedUser = await User.findById(memberId);
     await Activity.create({
       project: project._id,
       user: req.user._id,
       type: isSelfRemoving ? "LEAVE" : "REMOVE_MEMBER",
-      details: { memberName: removedUser ? removedUser.name : "Unknown User" },
+      details: {
+        memberName: removedUser ? removedUser.name : "Unknown User",
+        memberId,
+        actorName: req.user.name,
+        actorId: req.user._id,
+      },
     });
 
-    // Notify workspace socket room of membership removal
+    // Create durable in-app notification if removed by another user
+    if (!isSelfRemoving && removedUser) {
+      try {
+        await Notification.create({
+          recipient: memberId,
+          type: "SYSTEM",
+          title: "Workspace Access Revoked",
+          message: `You were removed from the project "${project.name}" by ${req.user.name}.`,
+          relatedProject: project._id,
+        });
+      } catch (notifErr) {
+        // Notification creation should not block removal
+      }
+    }
+
     const io = req.app.get("io");
     if (io) {
-      io.to(`project:${project._id.toString()}`).emit("member-removed", {
+      const targetProjectIdStr = project._id.toString();
+
+      // Targeted notification event to user channel
+      io.to(`user:${memberId}`).emit("member-removed", {
+        projectId: targetProjectIdStr,
+        projectName: project.name,
         userId: memberId,
         name: removedUser ? removedUser.name : "Member",
       });
+
+      // Fetch all sockets in the project room
+      const projectSockets = await io.in(`project:${targetProjectIdStr}`).fetchSockets();
+      for (const s of projectSockets) {
+        if (s.user?._id?.toString() === memberId.toString()) {
+          // If socket was inside a file room, clean up cursors and notify room
+          if (s.activeFileId) {
+            io.to(`file:${s.activeFileId}`).emit("cursor-remove", {
+              fileId: s.activeFileId,
+              userId: memberId,
+            });
+            io.to(`file:${s.activeFileId}`).emit("mouse-remove", {
+              fileId: s.activeFileId,
+              userId: memberId,
+            });
+            io.to(`file:${s.activeFileId}`).emit("leave-file", {
+              fileId: s.activeFileId,
+              userId: memberId,
+              username: removedUser?.name || "Member",
+            });
+            s.leave(`file:${s.activeFileId}`);
+            s.activeFileId = null;
+          }
+
+          // Terminate active terminal process if running
+          if (typeof s.stopProjectTerminal === "function") {
+            s.stopProjectTerminal();
+          }
+
+          // Invalidate socket access on server
+          s.projectId = null;
+          s.projectRole = null;
+          s.leave(`project:${targetProjectIdStr}`);
+
+          // Targeted event on the socket instance before boot
+          s.emit("member-removed", {
+            projectId: targetProjectIdStr,
+            projectName: project.name,
+            userId: memberId,
+            name: removedUser ? removedUser.name : "Member",
+          });
+        }
+      }
+
+      // Broadcast member-removed to remaining project collaborators
+      io.to(`project:${targetProjectIdStr}`).emit("member-removed", {
+        userId: memberId,
+        name: removedUser ? removedUser.name : "Member",
+      });
+
+      // Update presence for remaining members
+      if (typeof io.broadcastProjectPresence === "function") {
+        await io.broadcastProjectPresence(targetProjectIdStr);
+      }
     }
 
     res.status(200).json({
@@ -582,19 +661,66 @@ export const updateMemberRole = async (req, res, next) => {
     project.memberRoles.set(userId, role);
     await project.save();
 
-    // Log activity
+    // Log durable activity
     const targetUser = await User.findById(userId);
     await Activity.create({
       project: project._id,
       user: req.user._id,
-      type: "EDIT",
-      details: { action: "change_role", memberName: targetUser ? targetUser.name : "Member", role },
+      type: "CHANGE_ROLE",
+      details: {
+        action: "change_role",
+        memberName: targetUser ? targetUser.name : "Member",
+        targetUserId: userId,
+        oldRole: targetRole || "Editor",
+        role,
+        actorName: req.user.name,
+        actorId: req.user._id,
+      },
     });
 
-    // Notify other workspace users via socket
+    // Create durable in-app notification for the affected user
+    try {
+      await Notification.create({
+        recipient: userId,
+        type: "SYSTEM",
+        title: "Workspace Role Updated",
+        message: `Your role in project "${project.name}" was changed to ${role} by ${req.user.name}.`,
+        relatedProject: project._id,
+      });
+    } catch (notifErr) {
+      // Notification failure should not block role update
+    }
+
+    // Notify workspace users and update active socket instances in real-time
     const io = req.app.get("io");
     if (io) {
+      // 1. Send targeted notification to user channel
+      io.to(`user:${userId}`).emit("role-notification", {
+        projectId: id,
+        projectName: project.name,
+        role,
+        message: `Your role was updated to ${role}.`,
+      });
+
+      // 2. Broadcast role update to all project room participants
       io.to(`project:${id}`).emit("member-role-updated", { userId, role });
+
+      // 3. Update in-memory socket projectRole on all active sockets for that user in the project
+      const projectSockets = await io.in(`project:${id}`).fetchSockets();
+      for (const s of projectSockets) {
+        if (s.user?._id?.toString() === userId.toString()) {
+          s.projectRole = role;
+          // If demoted to read-only role (Viewer / Client), terminate active terminal
+          if (role === "Viewer" || role === "Client") {
+            if (typeof s.stopProjectTerminal === "function") {
+              s.stopProjectTerminal();
+            }
+            s.emit("project-terminal-error", {
+              message: "Your project role has been changed to read-only. Terminal session closed.",
+            });
+          }
+        }
+      }
     }
 
     res.status(200).json({
