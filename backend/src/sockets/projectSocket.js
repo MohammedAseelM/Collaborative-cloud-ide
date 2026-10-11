@@ -392,6 +392,19 @@ export const registerSocketHandlers = (io) => {
           return;
         }
 
+        // Leave previous project room if socket is already in a different project
+        if (socket.projectId && socket.projectId.toString() !== projectId.toString()) {
+          const oldPid = socket.projectId.toString();
+          socket.leave(`project:${oldPid}`);
+          if (socket.activeFileId) {
+            socket.leave(`file:${socket.activeFileId}`);
+            socket.activeFileId = null;
+          }
+          trackUserSocketDisconnect(oldPid, socket.user._id, socket.id);
+          releaseCursorColor(socket);
+          await broadcastProjectPresence(io, oldPid);
+        }
+
         const isFirstConnection = trackUserSocketConnect(projectId, socket.user._id, socket.id);
         socket.projectId = projectId;
         socket.projectRole = project.owner.toString() === socket.user._id.toString()
@@ -444,7 +457,13 @@ export const registerSocketHandlers = (io) => {
           return;
         }
 
-        if (!socket.projectId || socket.projectId !== file.project.toString()) {
+        // If socket is bound to a project, reject joining files belonging to a different project
+        if (socket.projectId && socket.projectId.toString() !== file.project.toString()) {
+          socket.emit("error", { message: "File does not belong to the active project workspace" });
+          return;
+        }
+
+        if (!socket.projectId) {
           socket.projectId = file.project.toString();
           socket.projectRole = fileProject.owner.toString() === socket.user._id.toString()
             ? "Owner"

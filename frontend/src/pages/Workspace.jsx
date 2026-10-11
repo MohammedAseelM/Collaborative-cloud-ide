@@ -374,6 +374,22 @@ const Workspace = () => {
     socketRef.current = socket;
   }, [socket]);
 
+  // Reset tab, active file, and editor state whenever the route projectId changes
+  useEffect(() => {
+    setFiles([]);
+    setOpenTabs([]);
+    setActiveFileId(null);
+    setProject(null);
+    setIsLoadingProject(true);
+    if (editorRef.current) {
+      try {
+        isApplyingSocketEdit.current = true;
+        editorRef.current.setValue("");
+        isApplyingSocketEdit.current = false;
+      } catch {}
+    }
+  }, [projectId]);
+
   // Fetch Project Details & Flat file system
   const loadProjectAndFiles = useCallback(async () => {
     try {
@@ -386,8 +402,11 @@ const Workspace = () => {
 
       // Auto-open first priority source file if no active tab is currently open
       if (fileList.length > 0) {
+        const fileIdSet = new Set(fileList.map((f) => String(f._id)));
         setOpenTabs((prev) => {
-          if (prev.length > 0) return prev;
+          const validPrev = prev.filter((t) => fileIdSet.has(String(t.fileId)));
+          if (validPrev.length > 0) return validPrev;
+
           const sourceFiles = fileList.filter((f) => !f.isFolder);
           if (sourceFiles.length > 0) {
             const priorityNames = [
@@ -407,8 +426,11 @@ const Workspace = () => {
             setActiveFileId(defaultFile._id);
             return [{ fileId: defaultFile._id, name: defaultFile.name, isDirty: false }];
           }
-          return prev;
+          return [];
         });
+      } else {
+        setOpenTabs([]);
+        setActiveFileId(null);
       }
       // Fetch active dev server status & port
       try {
@@ -655,6 +677,11 @@ const Workspace = () => {
 
     // Real-Time Project Files synchronization (create, rename, delete, upload, import)
     socketInstance.on("files-updated", async (data) => {
+      // Ignore broadcast events intended for other project workspaces
+      if (data?.projectId && String(data.projectId) !== String(projectId)) {
+        return;
+      }
+
       try {
         const dataFiles = await fetchProjectFiles(projectId);
         const updatedFiles = dataFiles.files || [];
@@ -709,6 +736,11 @@ const Workspace = () => {
     });
 
     socketInstance.on("project-version-restored", async (data) => {
+      // Ignore broadcast events intended for other project workspaces
+      if (data?.projectId && String(data.projectId) !== String(projectId)) {
+        return;
+      }
+
       addToastRef.current?.(
         `Project restored to Version v${data.versionNumber} ("${data.versionName || ""}") by ${data.restoredBy}`,
         "info"

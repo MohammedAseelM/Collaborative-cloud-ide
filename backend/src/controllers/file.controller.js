@@ -346,13 +346,34 @@ export const deleteFileNode = async (req, res, next) => {
     // 1. Store recoverable version snapshot before destructive delete
     if (!wasFolder) {
       try {
+        await syncDiskToDatabase(node.project);
+        const activeNodes = await FileNode.find({
+          project: node.project,
+          isDeleted: { $ne: true },
+        }).sort({ isFolder: -1, relativePath: 1, name: 1 });
+
+        const snapshotFiles = activeNodes.map((n) => ({
+          originalId: n._id,
+          name: n.name,
+          isFolder: Boolean(n.isFolder),
+          parentId: n.parentId ? n.parentId.toString() : null,
+          relativePath: n.relativePath || "",
+          content: n.isFolder ? "" : (n.content || ""),
+          language: n.language || "",
+          size: n.size || 0,
+        }));
+
         const latestVersion = await Version.findOne({ project: node.project }).sort({ versionNumber: -1 });
         const nextVersionNumber = latestVersion ? latestVersion.versionNumber + 1 : 1;
         await Version.create({
           project: node.project,
+          name: `Before deleting ${deletedName}`,
           code: node.content || "",
           versionNumber: nextVersionNumber,
           description: `Snapshot before deleting ${deletedName}`,
+          files: snapshotFiles,
+          totalFiles: snapshotFiles.filter((f) => !f.isFolder).length,
+          totalFolders: snapshotFiles.filter((f) => f.isFolder).length,
           createdBy: req.user._id,
         });
       } catch (snapErr) {
@@ -555,16 +576,42 @@ export const restoreFileNode = async (req, res, next) => {
       await restoreSubtree(node._id);
     }
 
-    // Record restoration activity and version snapshot
-    const latestVersion = await Version.findOne({ project: node.project }).sort({ versionNumber: -1 });
-    const versionNumber = latestVersion ? latestVersion.versionNumber + 1 : 1;
-    await Version.create({
-      project: node.project,
-      code: node.content || "",
-      versionNumber,
-      description: `Restored ${safeNodeName} (v${versionNumber})`,
-      createdBy: req.user._id,
-    });
+    // Record restoration activity and full version snapshot
+    let versionNumber = 1;
+    try {
+      await syncDiskToDatabase(node.project);
+      const activeNodes = await FileNode.find({
+        project: node.project,
+        isDeleted: { $ne: true },
+      }).sort({ isFolder: -1, relativePath: 1, name: 1 });
+
+      const snapshotFiles = activeNodes.map((n) => ({
+        originalId: n._id,
+        name: n.name,
+        isFolder: Boolean(n.isFolder),
+        parentId: n.parentId ? n.parentId.toString() : null,
+        relativePath: n.relativePath || "",
+        content: n.isFolder ? "" : (n.content || ""),
+        language: n.language || "",
+        size: n.size || 0,
+      }));
+
+      const latestVersion = await Version.findOne({ project: node.project }).sort({ versionNumber: -1 });
+      versionNumber = latestVersion ? latestVersion.versionNumber + 1 : 1;
+      await Version.create({
+        project: node.project,
+        name: `Restored ${safeNodeName}`,
+        code: node.content || "",
+        versionNumber,
+        description: `Restored ${safeNodeName} (v${versionNumber})`,
+        files: snapshotFiles,
+        totalFiles: snapshotFiles.filter((f) => !f.isFolder).length,
+        totalFolders: snapshotFiles.filter((f) => f.isFolder).length,
+        createdBy: req.user._id,
+      });
+    } catch (verErr) {
+      logger.warn(`Could not save post-restore snapshot: ${verErr.message}`);
+    }
 
     await Activity.create({
       project: node.project,
@@ -582,6 +629,7 @@ export const restoreFileNode = async (req, res, next) => {
     const io = req.app.get("io");
     if (io) {
       io.to(`project:${node.project.toString()}`).emit("files-updated", {
+        projectId: node.project.toString(),
         action: "restore",
         file: node,
         fileId: node._id,

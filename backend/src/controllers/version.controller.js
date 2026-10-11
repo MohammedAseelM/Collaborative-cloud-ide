@@ -11,6 +11,7 @@ import FileNode from "../models/file.model.js";
 import Activity from "../models/activity.model.js";
 import { findMemberProjectOrThrow, verifyProjectPermission } from "./project.controller.js";
 import { resolveProjectPath } from "../utils/projectPath.js";
+import { syncDiskToDatabase } from "../services/workspaceSync.service.js";
 import { env } from "../config/env.js";
 import logger from "../utils/logger.js";
 
@@ -34,10 +35,13 @@ export const createVersion = async (req, res, next) => {
     const snapshotName = (name && name.trim()) || `Snapshot v${versionNumber}`;
     const snapshotDesc = (description && description.trim()) || "";
 
+    // Sync disk changes to database first to ensure full file fidelity
+    await syncDiskToDatabase(project._id);
+
     // Fetch all active, non-deleted files and folders for this project
     const activeNodes = await FileNode.find({
       project: project._id,
-      isDeleted: false,
+      isDeleted: { $ne: true },
     }).sort({ isFolder: -1, relativePath: 1, name: 1 });
 
     // Build snapshot file items preserving relative tree linkages and contents
@@ -187,9 +191,11 @@ export const restoreVersion = async (req, res, next) => {
 
     // 1. SAFETY RECOVERY PATH: Auto-save current workspace state prior to restoring
     // so user can seamlessly revert accidental restorations
+    await syncDiskToDatabase(project._id);
+
     const currentActiveNodes = await FileNode.find({
       project: project._id,
-      isDeleted: false,
+      isDeleted: { $ne: true },
     });
 
     if (currentActiveNodes.length > 0) {
@@ -326,12 +332,38 @@ export const restoreVersion = async (req, res, next) => {
         restoredFileCount++;
       }
 
-      // Step D: Sync restored files to disk
+      // Step D: Sync restored files to disk and clean up extraneous non-snapshot files
       try {
-        const projectDir = path.resolve(env.WORKSPACE_ROOT, project.owner.toString(), project._id.toString());
+        const ownerId = (project.owner?._id || project.owner).toString();
+        const projectDir = path.resolve(env.WORKSPACE_ROOT, ownerId, project._id.toString());
         if (!fs.existsSync(projectDir)) {
           fs.mkdirSync(projectDir, { recursive: true });
+        } else {
+          // Clean non-ignored disk files/folders to avoid preserving foreign/outdated files
+          const IGNORED_DISK_DIRS = new Set(["node_modules", ".git", "dist", "build", ".next"]);
+          const cleanDirectory = (dir) => {
+            if (!fs.existsSync(dir)) return;
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+            for (const entry of entries) {
+              if (IGNORED_DISK_DIRS.has(entry.name)) continue;
+              const fullEntryPath = path.join(dir, entry.name);
+              if (entry.isDirectory()) {
+                cleanDirectory(fullEntryPath);
+                try {
+                  if (fs.readdirSync(fullEntryPath).length === 0) {
+                    fs.rmdirSync(fullEntryPath);
+                  }
+                } catch {}
+              } else {
+                try {
+                  fs.unlinkSync(fullEntryPath);
+                } catch {}
+              }
+            }
+          };
+          cleanDirectory(projectDir);
         }
+
         for (const f of snapshotFiles) {
           if (!f.isFolder && f.relativePath) {
             const filePath = resolveProjectPath(projectDir, f.relativePath);
@@ -464,12 +496,13 @@ export const restoreVersion = async (req, res, next) => {
       },
     });
 
-    const activeFiles = await FileNode.find({ project: project._id, isDeleted: false }).sort({ isFolder: -1, name: 1 });
+    const activeFiles = await FileNode.find({ project: project._id, isDeleted: { $ne: true } }).sort({ isFolder: -1, name: 1 });
 
     // 6. REAL-TIME COLLABORATION BROADCAST (Socket.IO)
     const io = req.app.get("io");
     if (io) {
       io.to(`project:${project._id}`).emit("files-updated", {
+        projectId: project._id.toString(),
         action: "restore",
         versionNumber: version.versionNumber,
         versionName: version.name,
