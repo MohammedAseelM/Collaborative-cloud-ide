@@ -375,9 +375,18 @@ export const restoreVersion = async (req, res, next) => {
         logger.warn(`Disk sync failed during version restore: ${diskErr.message}`);
       }
     } else if (version.code) {
-      // Legacy snapshot fallback: check if code is React/JSX
-      const isReact = /import\s+React|from\s+['"]react['"]|<[A-Z][a-zA-Z]*[\s/>]|export\s+default/.test(version.code);
-      const fileName = isReact ? "App.jsx" : "index.js";
+      // Legacy snapshot fallback: only scaffold React companion files for explicit React projects
+      const isReact = project.language === "react" || (project.projectType === "react-vite" && project.language !== "javascript");
+      const defaultFilenames = {
+        javascript: "index.js",
+        python: "main.py",
+        java: "Main.java",
+        cpp: "main.cpp",
+        c: "main.c",
+        typescript: "index.ts",
+        react: "App.jsx",
+      };
+      const fileName = isReact ? "App.jsx" : (defaultFilenames[project.language] || "index.js");
       await FileNode.create({
         name: fileName,
         isFolder: false,
@@ -385,7 +394,7 @@ export const restoreVersion = async (req, res, next) => {
         parentId: null,
         content: version.code,
         relativePath: fileName,
-        language: "javascript",
+        language: project.language === "react" ? "javascript" : (project.language || "javascript"),
         size: Buffer.byteLength(version.code, "utf8"),
         createdBy: req.user._id,
         updatedBy: req.user._id,

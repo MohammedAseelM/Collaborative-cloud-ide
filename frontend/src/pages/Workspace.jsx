@@ -245,8 +245,8 @@ const Workspace = () => {
   }, [searchParams]);
 
   const isReactProject = useMemo(() => {
-    return project?.projectType === "react-vite" || files.some((f) => f.name === "package.json");
-  }, [project, files]);
+    return project?.language === "react" || (project?.projectType === "react-vite" && project?.language !== "javascript");
+  }, [project]);
 
   // Custom collaboration hooks for presence, live cursors & mouse pointers
   const { presenceList } = usePresence({ onlineUsers, files, currentUser });
@@ -1086,9 +1086,9 @@ const Workspace = () => {
       const code = editorRef.current ? editorRef.current.getValue() : "";
       let fileLanguage = activeFile ? getExecutionLanguage(activeFile.name) : null;
 
-      // Auto-detect React/JSX in .js files and render as live preview
-      const hasJSX = /import\s+React|from\s+['"]react['"]|<[A-Z][a-zA-Z]*[\s/>]|<div[\s>]|<span[\s>]|<p[\s>]|<h[1-6][\s>]|<button[\s>]|<input[\s/>]|<form[\s>]/.test(code);
-      const isReactCode = fileLanguage === "react" || (fileLanguage === "javascript" && hasJSX);
+      // React live preview is ONLY for explicit React projects or explicit .jsx/.tsx files
+      const isExplicitReactFile = /\.jsx$|\.tsx$/i.test(activeFile?.name || "");
+      const isReactCode = project?.language === "react" || (isExplicitReactFile && project?.language !== "javascript");
 
       if (!fileLanguage) {
         addToast("This file type cannot be executed. Select a code file (JS, TS, Python, C, C++, Java, HTML, CSS, React) to run.", "warning");
@@ -1117,7 +1117,7 @@ const Workspace = () => {
         return;
       }
 
-      // For React/JSX code, generate a live browser preview directly (no server round-trip needed)
+      // For React/JSX code in React projects, generate a live browser preview directly (no server round-trip needed)
       if (isReactCode) {
         // Strip ES module import/export for browser compatibility (React/ReactDOM loaded via CDN)
         let cleanCode = code
@@ -1162,7 +1162,7 @@ const Workspace = () => {
 </html>`;
         setPreviewHtml(previewDoc);
         setIsPreviewOpen(true);
-        if (project?.projectType === "react-vite" || project?.projectType === "react" || project?.template === "react-vite") {
+        if (project?.language === "react" || project?.template === "react-vite") {
           handleStartDevServer();
         }
         addToast("React preview generated!", "success");
@@ -1317,7 +1317,8 @@ const Workspace = () => {
 
   const currentLanguageLabel = useMemo(() => {
     if (!project) return "";
-    if (project.projectType === "react-vite" || project.projectType === "react" || project.language === "react") return "React";
+    if (project.language === "react") return "React";
+    if (project.projectType === "react-vite" && project.language !== "javascript") return "React";
     return project.language === "cpp" ? "C++" : project.language === "c" ? "C" : project.language;
   }, [project]);
 

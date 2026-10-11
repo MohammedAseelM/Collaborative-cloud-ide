@@ -658,10 +658,9 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
     await syncProjectFilesToDisk(projectId);
   }
   if (!fs.existsSync(pkgJsonPath)) {
-    const projectFiles = await FileNode.find({ project: projectId, isDeleted: false }).select("name relativePath");
-    const hasWebFiles = projectFiles.some((f) => /\.(jsx|tsx|html|js|css)$/i.test(f.name));
-    if (hasWebFiles || project?.language === "javascript" || project?.language === "react") {
-      appendAndBroadcastLog(projectId, "📦 Auto-scaffolding package.json for web project...", io);
+    const isReact = project?.language === "react" || (project?.projectType === "react-vite" && project?.language !== "javascript");
+    if (isReact) {
+      appendAndBroadcastLog(projectId, "📦 Auto-scaffolding package.json for React project...", io);
       const defaultPkg = {
         name: (project?.name || "cloud-project").toLowerCase().replace(/[^a-z0-9-]/g, "-"),
         private: true,
@@ -709,6 +708,33 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
           size: Buffer.byteLength(viteContent, "utf8"),
         }).catch(() => {});
       }
+      if (io) {
+        io.to(`project:${projectId}`).emit("files-updated", { action: "scaffold-package", projectId });
+      }
+    } else if (project?.language === "javascript") {
+      appendAndBroadcastLog(projectId, "📦 Auto-scaffolding package.json for Node.js project...", io);
+      const defaultPkg = {
+        name: (project?.name || "cloud-project").toLowerCase().replace(/[^a-z0-9-]/g, "-"),
+        private: true,
+        version: "1.0.0",
+        type: "module",
+        scripts: {
+          start: "node index.js",
+          dev: "node index.js",
+        },
+      };
+      const pkgContent = JSON.stringify(defaultPkg, null, 2);
+      fs.writeFileSync(pkgJsonPath, pkgContent, "utf8");
+      await FileNode.create({
+        name: "package.json",
+        isFolder: false,
+        project: projectId,
+        parentId: null,
+        content: pkgContent,
+        relativePath: "package.json",
+        language: "json",
+        size: Buffer.byteLength(pkgContent, "utf8"),
+      }).catch(() => {});
       if (io) {
         io.to(`project:${projectId}`).emit("files-updated", { action: "scaffold-package", projectId });
       }

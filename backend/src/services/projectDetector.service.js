@@ -11,15 +11,18 @@ import Project from "../models/project.model.js";
  * @returns {Promise<{ projectType: string, startCommand: string, installCommand: string, defaultPort: number }>}
  */
 export const detectAndSaveProjectType = async (projectId) => {
-  const files = await FileNode.find({ project: projectId }).select("name isFolder parentId content relativePath");
+  const project = await Project.findById(projectId);
+  const files = await FileNode.find({ project: projectId, isDeleted: false }).select("name isFolder parentId content relativePath");
 
   const filenames = files.map((f) => (f.name || "").toLowerCase());
   const relativePaths = files.map((f) => (f.relativePath || f.name || "").toLowerCase());
 
-  let projectType = "general";
-  let startCommand = "npm start";
+  let projectType = project?.language && project.language !== "react" ? project.language : "general";
+  let startCommand = project?.language === "javascript" ? "node index.js" : "npm start";
   let installCommand = "npm install";
   let defaultPort = 5173;
+
+  const isExplicitReact = project?.language === "react";
 
   // 1. JavaScript / TypeScript Projects (package.json)
   const packageFile = files.find((f) => f.name.toLowerCase() === "package.json" && !f.isFolder);
@@ -37,7 +40,7 @@ export const detectAndSaveProjectType = async (projectId) => {
 
     installCommand = "npm install";
 
-    if (deps.vite || filenames.includes("vite.config.js") || filenames.includes("vite.config.ts")) {
+    if (isExplicitReact || (deps.react && (deps.vite || filenames.includes("vite.config.js") || filenames.includes("vite.config.ts")))) {
       projectType = "react-vite";
       startCommand = scripts.dev ? "npm run dev" : "npx vite";
       defaultPort = 5173;
@@ -54,13 +57,13 @@ export const detectAndSaveProjectType = async (projectId) => {
       startCommand = scripts.start ? "npm start" : scripts.dev ? "npm run dev" : "node index.js";
       defaultPort = 3000;
     } else {
-      projectType = "javascript";
+      projectType = project?.language || "javascript";
       startCommand = scripts.dev ? "npm run dev" : scripts.start ? "npm start" : "node index.js";
       defaultPort = 5173;
     }
   } 
-  // 1b. React Projects without package.json
-  else if (filenames.some((f) => f.endsWith(".jsx") || f.endsWith(".tsx")) || filenames.includes("vite.config.js")) {
+  // 1b. React Projects without package.json (Only for explicit React projects)
+  else if (isExplicitReact && (filenames.some((f) => f.endsWith(".jsx") || f.endsWith(".tsx")) || filenames.includes("vite.config.js"))) {
     projectType = "react-vite";
     startCommand = "npm run dev";
     installCommand = "npm install";
@@ -118,6 +121,26 @@ export const detectAndSaveProjectType = async (projectId) => {
     projectType = "docker-app";
     startCommand = "docker build -t cloud-app . && docker run -p 5173:5173 cloud-app";
     defaultPort = 5173;
+  }
+  // 7. C/C++ Projects
+  else if (project?.language === "cpp" || filenames.some((f) => f.endsWith(".cpp"))) {
+    projectType = "cpp";
+    startCommand = "g++ main.cpp -o app && ./app";
+    installCommand = "";
+    defaultPort = null;
+  }
+  else if (project?.language === "c" || filenames.some((f) => f.endsWith(".c"))) {
+    projectType = "c";
+    startCommand = "gcc main.c -o app && ./app";
+    installCommand = "";
+    defaultPort = null;
+  }
+
+  // Safety guardrail: Never classify non-react projects as react-vite unless package.json explicitly depends on react
+  const hasReactDependency = Boolean(packageFile && (packageFile.content || "").includes('"react"'));
+  if (project?.language && project.language !== "react" && !hasReactDependency && projectType === "react-vite") {
+    projectType = project.language;
+    startCommand = project.language === "javascript" ? "node index.js" : "";
   }
 
   // Update Project model in MongoDB

@@ -105,7 +105,7 @@ const ProjectCard = ({ project, onEdit, onDelete, onFavorite, onArchive, current
 
       <div className="flex items-center justify-between gap-2 mt-4 pr-7 text-xs text-slate-500 relative z-10 pointer-events-none">
         <span className="capitalize px-2 py-0.5 rounded bg-slate-800 text-slate-300">
-          {project.projectType === "react-vite" || project.projectType === "react" || project.language === "react"
+          {project.language === "react" || (project.projectType === "react-vite" && project.language !== "javascript")
             ? "React"
             : project.language === "cpp"
             ? "C++"
