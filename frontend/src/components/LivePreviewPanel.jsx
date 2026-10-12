@@ -163,7 +163,7 @@ export default function LivePreviewPanel({
 
       {/* Main Preview Frame Canvas */}
       <div className="flex-1 bg-slate-950 flex items-center justify-center p-2 overflow-auto min-h-0">
-        {(serverStatus === "running" || serverStatus === "previewing") && (activeUrl || previewHtml) ? (
+        {Boolean(previewHtml) || ((serverStatus === "running" || serverStatus === "previewing") && activeUrl) ? (
           <div
             className={`h-full bg-white rounded-xl shadow-2xl overflow-hidden transition-all duration-300 ${
               viewportMode === "mobile"

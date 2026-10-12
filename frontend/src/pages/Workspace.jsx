@@ -245,7 +245,7 @@ const Workspace = () => {
   }, [searchParams]);
 
   const isReactProject = useMemo(() => {
-    return project?.language === "react" || (project?.projectType === "react-vite" && project?.language !== "javascript");
+    return project?.language === "react" || (project?.projectType === "react-vite" && !["javascript", "html", "css", "python", "c", "cpp", "java"].includes(project?.language));
   }, [project]);
 
   // Custom collaboration hooks for presence, live cursors & mouse pointers
@@ -374,13 +374,21 @@ const Workspace = () => {
     socketRef.current = socket;
   }, [socket]);
 
-  // Reset tab, active file, and editor state whenever the route projectId changes
+  // Reset tab, active file, editor, and runner preview state whenever the route projectId changes
   useEffect(() => {
     setFiles([]);
     setOpenTabs([]);
     setActiveFileId(null);
     setProject(null);
     setIsLoadingProject(true);
+    setPreviewHtml("");
+    setPreviewUrl(null);
+    setDevServerPort(null);
+    setServerStatus("stopped");
+    setIsPreviewOpen(false);
+    setStdout("");
+    setStderr("");
+    setCompileError("");
     if (editorRef.current) {
       try {
         isApplyingSocketEdit.current = true;
@@ -1110,6 +1118,7 @@ const Workspace = () => {
           activeFile.name
         );
         setPreviewHtml(previewDoc);
+        setServerStatus("running");
         setIsPreviewOpen(true);
         addToast("Preview generated successfully!", "success");
         setIsRunning(false);
@@ -1318,8 +1327,15 @@ const Workspace = () => {
   const currentLanguageLabel = useMemo(() => {
     if (!project) return "";
     if (project.language === "react") return "React";
-    if (project.projectType === "react-vite" && project.language !== "javascript") return "React";
-    return project.language === "cpp" ? "C++" : project.language === "c" ? "C" : project.language;
+    if (project.language === "cpp") return "C++";
+    if (project.language === "c") return "C";
+    if (project.language === "html") return "HTML";
+    if (project.language === "css") return "CSS";
+    if (project.language === "javascript") return "JavaScript";
+    if (project.language === "python") return "Python";
+    if (project.language === "java") return "Java";
+    if (project.projectType === "react-vite") return "React";
+    return project.language;
   }, [project]);
 
   if (isLoadingProject) {

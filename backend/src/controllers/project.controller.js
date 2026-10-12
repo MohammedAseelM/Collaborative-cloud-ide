@@ -122,6 +122,8 @@ export const createProject = async (req, res, next) => {
       cpp: "main.cpp",
       c: "main.c",
       typescript: "index.ts",
+      html: "index.html",
+      css: "style.css",
       other: "code.txt",
     };
     const filename = defaultFilenames[language] || defaultFilenames.other;

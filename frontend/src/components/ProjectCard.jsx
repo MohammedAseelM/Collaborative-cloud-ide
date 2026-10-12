@@ -105,12 +105,18 @@ const ProjectCard = ({ project, onEdit, onDelete, onFavorite, onArchive, current
 
       <div className="flex items-center justify-between gap-2 mt-4 pr-7 text-xs text-slate-500 relative z-10 pointer-events-none">
         <span className="capitalize px-2 py-0.5 rounded bg-slate-800 text-slate-300">
-          {project.language === "react" || (project.projectType === "react-vite" && project.language !== "javascript")
+          {project.language === "react" || (project.projectType === "react-vite" && !["javascript", "html", "css", "python", "c", "cpp", "java"].includes(project.language))
             ? "React"
             : project.language === "cpp"
             ? "C++"
             : project.language === "c"
             ? "C"
+            : project.language === "html"
+            ? "HTML"
+            : project.language === "css"
+            ? "CSS"
+            : project.language === "javascript"
+            ? "JavaScript"
             : project.language}
         </span>
         <div className="flex items-center justify-end gap-2 min-w-0">

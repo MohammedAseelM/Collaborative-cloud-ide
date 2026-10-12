@@ -135,6 +135,19 @@ export const detectAndSaveProjectType = async (projectId) => {
     installCommand = "";
     defaultPort = null;
   }
+  // 8. Static HTML & CSS Projects
+  else if (project?.language === "html" || (!packageFile && filenames.some((f) => f.endsWith(".html")))) {
+    projectType = "html";
+    startCommand = "";
+    installCommand = "";
+    defaultPort = null;
+  }
+  else if (project?.language === "css" || (!packageFile && filenames.some((f) => f.endsWith(".css")))) {
+    projectType = "css";
+    startCommand = "";
+    installCommand = "";
+    defaultPort = null;
+  }
 
   // Safety guardrail: Never classify non-react projects as react-vite unless package.json explicitly depends on react
   const hasReactDependency = Boolean(packageFile && (packageFile.content || "").includes('"react"'));
