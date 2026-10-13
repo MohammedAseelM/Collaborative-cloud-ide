@@ -53,6 +53,24 @@ export const areDependenciesInstalled = (projectDir, projectType = null) => {
   const pkgJsonPath = path.join(projectDir, "package.json");
   if (!fs.existsSync(pkgJsonPath)) return false;
 
+  let pkg = {};
+  try {
+    const pkgContent = fs.readFileSync(pkgJsonPath, "utf-8");
+    pkg = JSON.parse(pkgContent);
+  } catch {
+    pkg = {};
+  }
+
+  const hasDeps = Boolean(
+    (pkg.dependencies && Object.keys(pkg.dependencies).length > 0) ||
+    (pkg.devDependencies && Object.keys(pkg.devDependencies).length > 0)
+  );
+
+  // If no dependencies or devDependencies are declared in package.json, dependencies are satisfied
+  if (!hasDeps) {
+    return true;
+  }
+
   const nodeModulesPath = path.join(projectDir, "node_modules");
   if (!fs.existsSync(nodeModulesPath)) return false;
 
@@ -62,18 +80,12 @@ export const areDependenciesInstalled = (projectDir, projectType = null) => {
   // Determine if project relies on Vite
   let isVite = projectType === "react-vite" || projectType === "react";
   if (!isVite) {
-    try {
-      const pkgContent = fs.readFileSync(pkgJsonPath, "utf-8");
-      const pkg = JSON.parse(pkgContent);
-      isVite = Boolean(
-        pkg.dependencies?.vite ||
-        pkg.devDependencies?.vite ||
-        pkg.scripts?.dev?.includes("vite") ||
-        pkg.scripts?.build?.includes("vite")
-      );
-    } catch {
-      // ignore JSON parse error
-    }
+    isVite = Boolean(
+      pkg.dependencies?.vite ||
+      pkg.devDependencies?.vite ||
+      pkg.scripts?.dev?.includes("vite") ||
+      pkg.scripts?.build?.includes("vite")
+    );
   }
 
   if (isVite) {

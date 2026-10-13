@@ -105,7 +105,9 @@ const buildStaticPreview = (htmlCode, cssCode, htmlFiles = [], javascriptFiles =
   pages[activePageKey] = htmlCode || pages[activePageKey] || "";
   if (!pages["index.html"]) pages["index.html"] = pages[activePageKey] || "";
   const scripts = Object.fromEntries(
-    javascriptFiles.map((file) => [file.name.toLowerCase(), file.content || ""])
+    javascriptFiles
+      .filter((file) => !/^\s*<!DOCTYPE\s+html/i.test(file.content || "") && !/^\s*<html[\s>]/i.test(file.content || ""))
+      .map((file) => [file.name.toLowerCase(), file.content || ""])
   );
   const scriptNavigationTargets = {};
   Object.values(scripts).forEach((source) => {
@@ -1093,29 +1095,30 @@ const Workspace = () => {
     try {
       const code = editorRef.current ? editorRef.current.getValue() : "";
       let fileLanguage = activeFile ? getExecutionLanguage(activeFile.name) : null;
+      const isHtmlContent = /^\s*<!DOCTYPE\s+html/i.test(code) || /^\s*<html[\s>]/i.test(code);
 
       // React live preview is ONLY for explicit React projects or explicit .jsx/.tsx files
       const isExplicitReactFile = /\.jsx$|\.tsx$/i.test(activeFile?.name || "");
-      const isReactCode = project?.language === "react" || (isExplicitReactFile && project?.language !== "javascript");
+      const isReactCode = (project?.language === "react" || (isExplicitReactFile && project?.language !== "javascript")) && !isHtmlContent;
 
-      if (!fileLanguage) {
+      if (!fileLanguage && !isHtmlContent) {
         addToast("This file type cannot be executed. Select a code file (JS, TS, Python, C, C++, Java, HTML, CSS, React) to run.", "warning");
         setIsRunning(false);
         return;
       }
 
-      // Static files can be previewed immediately without Docker or a dev server.
-      if (fileLanguage === "html" || fileLanguage === "css") {
-        const htmlFile = files.find((file) => !file.isFolder && file.name.toLowerCase() === "index.html");
+      // Static files or files containing HTML markup can be previewed immediately without Docker or a dev server.
+      if (fileLanguage === "html" || fileLanguage === "css" || isHtmlContent) {
+        const htmlFile = files.find((file) => !file.isFolder && (file.name.toLowerCase() === "index.html" || /\.html?$/i.test(file.name)));
         const cssFile = files.find((file) => !file.isFolder && /\.css$/i.test(file.name));
-        const htmlCode = fileLanguage === "html" ? code : htmlFile?.content || "";
+        const htmlCode = (fileLanguage === "html" || isHtmlContent) ? code : htmlFile?.content || "";
         const cssCode = fileLanguage === "css" ? code : cssFile?.content || "";
         const previewDoc = buildStaticPreview(
           htmlCode,
           cssCode,
-          files.filter((file) => !file.isFolder && /\.html?$/i.test(file.name)),
+          files.filter((file) => !file.isFolder && (/\.html?$/i.test(file.name) || /^\s*<!DOCTYPE\s+html/i.test(file.content || "") || /^\s*<html[\s>]/i.test(file.content || ""))),
           files.filter((file) => !file.isFolder && /\.js$/i.test(file.name)),
-          activeFile.name
+          activeFile ? activeFile.name : "index.html"
         );
         setPreviewHtml(previewDoc);
         setServerStatus("running");
@@ -1255,18 +1258,22 @@ const Workspace = () => {
   const handleStartDevServer = async () => {
     if (!canModifyProject) return;
     const fileLanguage = activeFile ? getExecutionLanguage(activeFile.name) : null;
-    if (fileLanguage === "html" || fileLanguage === "css") {
-      const code = editorRef.current ? editorRef.current.getValue() : activeFile.content || "";
-      const htmlFile = files.find((file) => !file.isFolder && file.name.toLowerCase() === "index.html");
+    const code = editorRef.current ? editorRef.current.getValue() : activeFile?.content || "";
+    const isHtmlContent = /^\s*<!DOCTYPE\s+html/i.test(code) || /^\s*<html[\s>]/i.test(code);
+    const hasHtmlFile = files.some((file) => !file.isFolder && (file.name.toLowerCase() === "index.html" || /\.html?$/i.test(file.name)));
+    const isStaticHtmlProject = project?.language === "html" || project?.language === "css" || (!project?.projectType && (fileLanguage === "html" || isHtmlContent || (hasHtmlFile && project?.language !== "react")));
+
+    if (fileLanguage === "html" || fileLanguage === "css" || isHtmlContent || isStaticHtmlProject) {
+      const htmlFile = files.find((file) => !file.isFolder && (file.name.toLowerCase() === "index.html" || /\.html?$/i.test(file.name)));
       const cssFile = files.find((file) => !file.isFolder && /\.css$/i.test(file.name));
-      const htmlCode = fileLanguage === "html" ? code : htmlFile?.content || "";
+      const htmlCode = (fileLanguage === "html" || isHtmlContent) ? code : htmlFile?.content || (isHtmlContent ? code : "");
       const cssCode = fileLanguage === "css" ? code : cssFile?.content || "";
       const previewDoc = buildStaticPreview(
         htmlCode,
         cssCode,
-        files.filter((file) => !file.isFolder && /\.html?$/i.test(file.name)),
+        files.filter((file) => !file.isFolder && (/\.html?$/i.test(file.name) || /^\s*<!DOCTYPE\s+html/i.test(file.content || "") || /^\s*<html[\s>]/i.test(file.content || ""))),
         files.filter((file) => !file.isFolder && /\.js$/i.test(file.name)),
-        activeFile.name
+        activeFile?.name || "index.html"
       );
       setPreviewHtml(previewDoc);
       setIsPreviewOpen(true);

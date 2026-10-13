@@ -14,8 +14,11 @@ import Project from "../src/models/project.model.js";
 import FileNode from "../src/models/file.model.js";
 import projectRoutes from "../src/routes/project.routes.js";
 import errorHandler from "../src/middlewares/errorHandler.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { detectAndSaveProjectType } from "../src/services/projectDetector.service.js";
-import { findAvailablePort } from "../src/services/projectRunner.service.js";
+import { findAvailablePort, areDependenciesInstalled } from "../src/services/projectRunner.service.js";
 
 let mongoServer;
 let app;
@@ -118,5 +121,39 @@ test("Port Allocator Service Tests", async (t) => {
     const port = await findAvailablePort(5173);
     assert.ok(typeof port === "number");
     assert.ok(port >= 5173);
+  });
+});
+
+test("areDependenciesInstalled Tests", async (t) => {
+  await t.test("should return false if package.json does not exist", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "dep-test-"));
+    try {
+      assert.equal(areDependenciesInstalled(tmpDir), false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  await t.test("should return true if package.json has no dependencies or devDependencies", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "dep-test-"));
+    try {
+      fs.writeFileSync(path.join(tmpDir, "package.json"), JSON.stringify({ name: "minimal-app", version: "1.0.0" }));
+      assert.equal(areDependenciesInstalled(tmpDir), true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  await t.test("should return false if package.json has dependencies but node_modules is missing", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "dep-test-"));
+    try {
+      fs.writeFileSync(
+        path.join(tmpDir, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { express: "^4.18.0" } })
+      );
+      assert.equal(areDependenciesInstalled(tmpDir), false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
