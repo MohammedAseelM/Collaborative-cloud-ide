@@ -13,7 +13,7 @@ import { env } from "../config/env.js";
 import { detectAndSaveProjectType } from "./projectDetector.service.js";
 import logger from "../utils/logger.js";
 import { releaseProjectEditLock } from "./projectEditLock.service.js";
-import { runReactSandboxCommand, startReactSandbox, stopReactSandbox } from "./sandboxService.js";
+import { runReactSandboxCommand, startReactSandbox, stopReactSandbox, isDockerAvailable } from "./sandboxService.js";
 import { resolveProjectPath } from "../utils/projectPath.js";
 import { allocatePortForProject, releaseProjectPort } from "./portManager.js";
 
@@ -122,11 +122,12 @@ export const getProjectExecutionEnv = (projectDir, extraEnv = {}) => {
   const isWindows = process.platform === "win32";
   const systemPath = process.env.PATH || process.env.Path || "";
   const localBin = path.join(projectDir, "node_modules", ".bin");
+  const nodeBinDir = path.dirname(process.execPath);
   const fallbackPaths = isWindows
     ? []
     : ["/usr/local/bin", "/usr/bin", "/bin", "/usr/local/sbin", "/usr/sbin", "/sbin"];
 
-  const pathParts = [localBin, systemPath, ...fallbackPaths].filter(Boolean);
+  const pathParts = [localBin, nodeBinDir, systemPath, ...fallbackPaths].filter(Boolean);
   const combinedPath = pathParts.join(path.delimiter);
 
   return {
@@ -137,6 +138,49 @@ export const getProjectExecutionEnv = (projectDir, extraEnv = {}) => {
     FORCE_COLOR: "true",
     ...extraEnv,
   };
+};
+
+/**
+ * Checks that Node.js and npm are present and runnable in the host environment.
+ */
+export const verifyNodeAndNpm = async (projectDir = process.cwd()) => {
+  const nodeVersion = process.version;
+  const isWindows = process.platform === "win32";
+  const shellCmd = isWindows ? "cmd.exe" : "sh";
+  const args = isWindows ? ["/c", "npm --version"] : ["-c", "npm --version"];
+
+  return new Promise((resolve) => {
+    let output = "";
+    let errorOutput = "";
+    const child = spawn(shellCmd, args, {
+      cwd: projectDir,
+      env: getProjectExecutionEnv(projectDir),
+      windowsHide: true,
+    });
+
+    child.stdout?.on("data", (d) => { output += d.toString(); });
+    child.stderr?.on("data", (d) => { errorOutput += d.toString(); });
+
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch {}
+      resolve({ available: false, nodeVersion, error: "npm --version check timed out after 10s" });
+    }, 10_000);
+
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      const npmVer = output.trim();
+      if (code === 0 && npmVer) {
+        resolve({ available: true, nodeVersion, npmVersion: npmVer });
+      } else {
+        resolve({ available: false, nodeVersion, error: errorOutput.trim() || `npm exited with code ${code}` });
+      }
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      resolve({ available: false, nodeVersion, error: err.message });
+    });
+  });
 };
 
 const getWorkspaceFilePath = async (file) => {
@@ -416,12 +460,25 @@ export const syncProjectFilesToDisk = async (projectId) => {
     fs.mkdirSync(projectDir, { recursive: true });
   }
 
-  const files = await FileNode.find({ project: projectId });
+  const files = await FileNode.find({ project: projectId, isDeleted: false });
+
+  const fileMap = new Map(files.map((f) => [f._id.toString(), f]));
+  const getRelativePath = (f) => {
+    if (f.relativePath) return f.relativePath;
+    const parts = [f.name];
+    let curr = f;
+    while (curr.parentId && fileMap.has(curr.parentId.toString())) {
+      curr = fileMap.get(curr.parentId.toString());
+      parts.unshift(curr.name);
+    }
+    return parts.join("/");
+  };
 
   // 1. Create folders first
   const folders = files.filter((f) => f.isFolder);
   for (const folder of folders) {
-    const folderPath = resolveProjectPath(projectDir, folder.relativePath || folder.name);
+    const relPath = getRelativePath(folder);
+    const folderPath = resolveProjectPath(projectDir, relPath);
     if (!fs.existsSync(folderPath)) {
       fs.mkdirSync(folderPath, { recursive: true });
     }
@@ -430,7 +487,8 @@ export const syncProjectFilesToDisk = async (projectId) => {
   // 2. Write file contents
   const codeFiles = files.filter((f) => !f.isFolder);
   for (const file of codeFiles) {
-    const filePath = resolveProjectPath(projectDir, file.relativePath || file.name);
+    const relPath = getRelativePath(file);
+    const filePath = resolveProjectPath(projectDir, relPath);
     const parentDir = path.dirname(filePath);
     if (!fs.existsSync(parentDir)) {
       fs.mkdirSync(parentDir, { recursive: true });
@@ -523,48 +581,65 @@ export const installDependencies = async (projectId, io = null) => {
         return false;
       }
 
-      let installCmd = project?.installCommand || "npm install";
-      if (installCmd.startsWith("npm install") && !installCmd.includes("--legacy-peer-deps")) {
+      // Check node and npm availability
+      const envCheck = await verifyNodeAndNpm(projectDir);
+      if (!envCheck.available) {
+        const errorMsg = `Node.js / npm environment check failed: ${envCheck.error}. Node version: ${envCheck.nodeVersion}`;
+        appendAndBroadcastLog(projectId, `❌ [INSTALL] ${errorMsg}`, io);
+        await updateServerStatus(projectId, "error", null, io);
+        return { success: false, error: errorMsg };
+      }
+
+      // Determine install command: use npm ci if package-lock exists, otherwise npm install
+      const hasLockfile = fs.existsSync(path.join(projectDir, "package-lock.json"));
+      let defaultInstall = hasLockfile ? "npm ci" : "npm install";
+      let installCmd = project?.installCommand || defaultInstall;
+      if (installCmd.startsWith("npm") && !installCmd.includes("--legacy-peer-deps")) {
         installCmd = `${installCmd} --legacy-peer-deps --no-audit --no-fund`;
       }
 
       if (!installCmd) {
-        return true;
+        return { success: true };
       }
 
       // Skip if dependencies are already fully installed
       if (areDependenciesInstalled(projectDir, project?.projectType)) {
         appendAndBroadcastLog(projectId, "✔ Dependencies already installed (Vite found in node_modules).", io);
-        return true;
+        return { success: true };
       }
 
       await updateServerStatus(projectId, "installing", null, io);
 
-      // Try Docker sandbox execution first if applicable
-      if (project?.projectType === "react-vite") {
-        appendAndBroadcastLog(projectId, "⚙ Installing dependencies in the Docker sandbox...", io);
+      // Try Docker sandbox execution first if applicable and Docker daemon is responsive
+      const dockerAvailable = await isDockerAvailable();
+      if (dockerAvailable && project?.projectType === "react-vite") {
+        appendAndBroadcastLog(projectId, "⚙ Installing dependencies in Docker sandbox...", io);
         try {
           const result = await runReactSandboxCommand(projectId, ["npm", "install", "--legacy-peer-deps", "--no-audit", "--no-fund"], {
             timeoutMs: 300_000,
           });
           if (result.output) appendAndBroadcastLog(projectId, result.output, io);
           const installed = result.exitCode === 0;
-          if (installed) {
+          if (installed && areDependenciesInstalled(projectDir, project?.projectType)) {
             appendAndBroadcastLog(projectId, "✅ Dependencies installed successfully!", io);
             await updateServerStatus(projectId, "ready", null, io);
-            return true;
+            return { success: true };
+          } else if (installed) {
+            appendAndBroadcastLog(projectId, "✅ Dependencies installed successfully in container!", io);
+            await updateServerStatus(projectId, "ready", null, io);
+            return { success: true };
           } else {
-            appendAndBroadcastLog(projectId, `❌ Dependency installation failed (exit code ${result.exitCode}).`, io);
+            const errorMsg = `Docker dependency install failed (exit code ${result.exitCode}): ${result.output?.slice(-400) || ""}`;
+            appendAndBroadcastLog(projectId, `❌ ${errorMsg}`, io);
             await updateServerStatus(projectId, "error", null, io);
-            return false;
+            return { success: false, error: errorMsg };
           }
         } catch (error) {
-          if (error.errorCode !== "DOCKER_UNAVAILABLE") {
-            await updateServerStatus(projectId, "error", null, io);
-            throw error;
-          }
-          appendAndBroadcastLog(projectId, "⚠️ Docker Desktop is unavailable. Falling back to native dependency installation...", io);
+          logger.warn(`Docker sandbox install failed: ${error.message}. Falling back to native dependency installation.`);
+          appendAndBroadcastLog(projectId, `⚠️ Docker Desktop is unavailable (${error.message}). Falling back to native dependency installation...`, io);
         }
+      } else if (project?.projectType === "react-vite") {
+        appendAndBroadcastLog(projectId, "⚙ Docker unavailable in environment. Proceeding with native dependency installation...", io);
       }
 
       // Native dependency installation on host
@@ -575,6 +650,8 @@ export const installDependencies = async (projectId, io = null) => {
       const args = isWin ? ["/c", installCmd] : ["-c", installCmd];
 
       return await new Promise((resolve) => {
+        let lastStderr = "";
+        let lastStdout = "";
         const child = spawn(shellCmd, args, {
           cwd: projectDir,
           env: getProjectExecutionEnv(projectDir),
@@ -582,11 +659,15 @@ export const installDependencies = async (projectId, io = null) => {
 
         child.stdout.on("data", (data) => {
           const text = data.toString();
+          lastStdout += text;
+          if (lastStdout.length > 20_000) lastStdout = lastStdout.slice(-20_000);
           appendAndBroadcastLog(projectId, text, io);
         });
 
         child.stderr.on("data", (data) => {
           const text = data.toString();
+          lastStderr += text;
+          if (lastStderr.length > 20_000) lastStderr = lastStderr.slice(-20_000);
           appendAndBroadcastLog(projectId, text, io);
         });
 
@@ -594,22 +675,25 @@ export const installDependencies = async (projectId, io = null) => {
           if (code === 0 && areDependenciesInstalled(projectDir, project?.projectType)) {
             appendAndBroadcastLog(projectId, "✅ Dependencies installed successfully!", io);
             await updateServerStatus(projectId, "ready", null, io);
-            resolve(true);
+            resolve({ success: true });
           } else if (code === 0) {
             appendAndBroadcastLog(projectId, "✅ Dependencies installed successfully!", io);
             await updateServerStatus(projectId, "ready", null, io);
-            resolve(true);
+            resolve({ success: true });
           } else {
-            appendAndBroadcastLog(projectId, `❌ Dependency installation failed with exit code ${code}`, io);
+            const errSummary = lastStderr.trim().slice(-400) || lastStdout.trim().slice(-400) || `exit code ${code}`;
+            const errorMsg = `Dependency installation failed (exit code ${code}): ${errSummary}`;
+            appendAndBroadcastLog(projectId, `❌ [INSTALL] ${errorMsg}`, io);
             await updateServerStatus(projectId, "error", null, io);
-            resolve(false);
+            resolve({ success: false, error: errorMsg });
           }
         });
 
         child.on("error", async (err) => {
-          appendAndBroadcastLog(projectId, `❌ Installation error: ${err.message}`, io);
+          const errorMsg = `Failed to spawn install process (${installCmd}): ${err.message}`;
+          appendAndBroadcastLog(projectId, `❌ [INSTALL] ${errorMsg}`, io);
           await updateServerStatus(projectId, "error", null, io);
-          resolve(false);
+          resolve({ success: false, error: errorMsg });
         });
       });
     } finally {
@@ -763,9 +847,13 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
   // 2. Strictly verify dependencies are installed BEFORE attempting to execute Vite
   if (!areDependenciesInstalled(projectDir, project?.projectType)) {
     appendAndBroadcastLog(projectId, "⚙ Dependencies not detected. Installing dependencies before starting dev server...", io);
-    const installed = await installDependencies(projectId, io);
-    if (!installed || !areDependenciesInstalled(projectDir, project?.projectType)) {
-      const errorMsg = "Dependencies are not installed. Please click Install to install dependencies before running the development server.";
+    const installRes = await installDependencies(projectId, io);
+    const isInstalled = typeof installRes === "object" ? installRes.success : Boolean(installRes);
+    if (!isInstalled || !areDependenciesInstalled(projectDir, project?.projectType)) {
+      const detailError = (typeof installRes === "object" && installRes.error)
+        ? installRes.error
+        : "Dependency installation failed. Review terminal logs for details.";
+      const errorMsg = `Cannot start development server: ${detailError}`;
       appendAndBroadcastLog(projectId, `❌ [EXECUTOR] ${errorMsg}`, io);
       await updateServerStatus(projectId, "error", null, io);
       releaseProjectPort(projectId);
@@ -773,8 +861,9 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
     }
   }
 
-  // 3. Try Docker sandbox execution if applicable
-  if (project?.projectType === "react-vite") {
+  // 3. Try Docker sandbox execution if applicable and Docker daemon is available
+  const dockerAvailable = await isDockerAvailable();
+  if (dockerAvailable && project?.projectType === "react-vite") {
     activeServers.set(projectId, {
       process: null,
       port: allocatedPort,
@@ -814,6 +903,8 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
       logger.info(`Docker sandbox start failed for project ${projectId} (${error.message}). Falling back to native process mode.`);
       appendAndBroadcastLog(projectId, `[DOCKER] Docker unavailable (${error.message}). Falling back to native execution mode...`, io);
     }
+  } else if (project?.projectType === "react-vite") {
+    appendAndBroadcastLog(projectId, "[REACT RUNTIME] Docker unavailable. Using native Node.js process mode...", io);
   }
 
   // 4. Native development server execution (Dependencies are guaranteed installed!)
@@ -883,14 +974,21 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
     const text = data.toString();
     appendAndBroadcastLog(projectId, text, io);
 
+    // Detect actual port bound by Vite from stdout
+    const portMatch = text.match(/(?:Local|Network):\s+https?:\/\/(?:[a-zA-Z0-9.-]+):(\d+)/i);
+    if (portMatch) {
+      const detectedPort = parseInt(portMatch[1], 10);
+      if (detectedPort && detectedPort !== allocatedPort) {
+        logger.info(`[REACT RUNTIME] Vite bound to port ${detectedPort} (originally allocated ${allocatedPort})`);
+        allocatedPort = detectedPort;
+        const sRecord = activeServers.get(projectId);
+        if (sRecord) sRecord.port = detectedPort;
+      }
+    }
+
     // Detect when dev server is ready from console logs
     if (
-      text.includes("Local:") ||
-      text.includes("ready in") ||
-      text.includes("Compiled successfully") ||
-      text.includes("running at") ||
-      text.includes("Server running") ||
-      text.includes("Listening on")
+      /\b(?:ready in|Local:\s*http|running at|Compiled successfully|Server running|Listening on)\b/i.test(text)
     ) {
       updateServerStatus(projectId, targetStatus, allocatedPort, io);
     }
@@ -917,8 +1015,8 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
     releaseProjectEditLock(projectId, null, io);
   });
 
-  // Poll until TCP port is open and listening before marking status as running
-  const isPortReady = await waitForPortOpen(allocatedPort, 15000);
+  // Poll until TCP port is open and listening before marking status as running (timeout up to 30s)
+  const isPortReady = await waitForPortOpen(allocatedPort, 30000);
   if (isPortReady) {
     await updateServerStatus(projectId, targetStatus, allocatedPort, io);
     appendAndBroadcastLog(projectId, `[PREVIEW] /preview/${projectId}/`, io);
@@ -929,11 +1027,11 @@ export const startDevServer = async (projectId, io = null, options = {}) => {
     if (isExited) {
       errorMsg = `Server process exited prematurely with exit code ${child.exitCode}.`;
       if (child.exitCode === 127) {
-        errorMsg += ` (Exit code 127: Command or executable not found. Ensure Vite and npm dependencies are installed.)`;
+        errorMsg += ` (Command or executable not found. Ensure Vite and npm dependencies are installed.)`;
       }
       errorMsg += ` Review terminal logs for details.`;
     } else {
-      errorMsg = `Dev server on port ${allocatedPort} did not become ready within 15s timeout.`;
+      errorMsg = `Dev server on port ${allocatedPort} did not become ready within 30s timeout.`;
     }
     logger.error(`[REACT RUNTIME] Dev server failure: ${errorMsg} for project ${projectId}\n` +
       `  exitCode: ${child.exitCode}\n` +
@@ -977,7 +1075,11 @@ export const stopDevServer = async (projectId, io = null) => {
       if (process.platform === "win32") {
         spawn("taskkill", ["/pid", String(serverRecord.process.pid), "/f", "/t"], { windowsHide: true });
       } else {
-        serverRecord.process.kill("SIGTERM");
+        try {
+          process.kill(-serverRecord.process.pid, "SIGTERM");
+        } catch {
+          serverRecord.process.kill("SIGTERM");
+        }
       }
     } catch (err) {
       logger.warn(`Failed to kill process: ${err.message}`);

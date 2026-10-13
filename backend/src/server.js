@@ -10,6 +10,7 @@ import connectDB from "./config/db.js";
 import { env } from "./config/env.js";
 import User from "./models/user.model.js";
 import { registerSocketHandlers } from "./sockets/projectSocket.js";
+import { handlePreviewUpgrade } from "./middlewares/previewProxy.middleware.js";
 import logger from "./utils/logger.js";
 
 const PORT = env.PORT;
@@ -70,6 +71,11 @@ const startServer = async () => {
     });
     app.set("io", io);
     registerSocketHandlers(io);
+
+    // Forward non-socket.io WebSocket upgrades (such as Vite HMR) to the preview proxy
+    server.on("upgrade", (req, socket, head) => {
+      handlePreviewUpgrade(req, socket, head);
+    });
 
     // 3. Start listening for requests on all network interfaces (localhost and network IP)
     server.listen(PORT, HOST, () => {

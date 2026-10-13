@@ -182,8 +182,8 @@ export const previewProxyHandler = async (req, res, next) => {
       changeOrigin: true,
       ws: true,
       pathRewrite: (pathStr) => {
-        // Strip /preview/:projectId or /api/projects/:projectId/preview prefix
-        const cleanPath = pathStr.replace(new RegExp(`^(/preview|/api/projects)/${projectId}(/preview)?`), "");
+        // Strip /preview/:projectId or /api/projects/:projectId/preview prefix dynamically for any project ID
+        const cleanPath = pathStr.replace(/^\/(?:preview|api\/projects)\/[a-zA-Z0-9_-]+(?:\/preview)?/, "");
         return cleanPath || "/";
       },
       onError: (err, req, res) => {
@@ -204,3 +204,25 @@ export const previewProxyHandler = async (req, res, next) => {
 
   return proxy(req, res, next);
 };
+
+export const handlePreviewUpgrade = (req, socket, head) => {
+  if (req.url?.startsWith("/socket.io")) return;
+
+  let projectId = null;
+  const match = req.url?.match(/\/preview\/([a-zA-Z0-9_-]+)/);
+  if (match) projectId = match[1];
+  if (!projectId && req.headers?.referer) {
+    const refMatch = req.headers.referer.match(/\/preview\/([a-zA-Z0-9_-]+)/);
+    if (refMatch) projectId = refMatch[1];
+  }
+  if (!projectId && lastPreviewedProjectId) projectId = lastPreviewedProjectId;
+
+  let port = getActiveProjectPort(projectId) || getProjectPort(projectId);
+  if (port && proxyInstances.has(port)) {
+    const proxy = proxyInstances.get(port);
+    if (proxy && typeof proxy.upgrade === "function") {
+      proxy.upgrade(req, socket, head);
+    }
+  }
+};
+

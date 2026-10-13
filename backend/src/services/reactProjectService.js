@@ -79,9 +79,11 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     strictPort: false,
+    allowedHosts: true,
   },
   preview: {
     host: "0.0.0.0",
+    allowedHosts: true,
   },
 });
 `,
@@ -324,7 +326,7 @@ export const createReactProject = async ({ userId, name, description = "", io = 
  * 2. Install project dependencies.
  */
 export const installReactDependencies = async (projectId, io = null) => {
-  const success = await installDependencies(projectId, io);
+  const result = await installDependencies(projectId, io);
   await syncDiskToDatabase(projectId);
 
   if (io) {
@@ -334,7 +336,9 @@ export const installReactDependencies = async (projectId, io = null) => {
     });
   }
 
-  return { success };
+  const isSuccess = typeof result === "object" ? Boolean(result.success) : Boolean(result);
+  const error = typeof result === "object" ? result.error : undefined;
+  return { success: isSuccess, error };
 };
 
 /**

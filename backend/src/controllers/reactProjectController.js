@@ -65,9 +65,10 @@ export const installDependenciesHandler = async (req, res, next) => {
     const io = req.app.get("io");
     const result = await installReactDependencies(projectId, io);
 
-    res.status(200).json({
+    res.status(result.success ? 200 : 400).json({
       success: result.success,
-      message: result.success ? "Dependencies installed successfully" : "Failed to install dependencies",
+      message: result.success ? "Dependencies installed successfully" : (result.error || "Failed to install dependencies"),
+      error: result.error,
     });
   } catch (error) {
     next(error);

@@ -88,11 +88,11 @@ export default function ReactCommandToolbar({
       if (res.success) {
         addToast("✅ Dependencies installed successfully!", "success");
       } else {
-        addToast("❌ Dependency installation failed.", "error");
+        addToast(res.message || res.error || "❌ Dependency installation failed.", "error");
       }
       if (onRefreshFiles) onRefreshFiles();
     } catch (err) {
-      addToast(err.response?.data?.message || "❌ Dependency installation failed.", "error");
+      addToast(err.response?.data?.message || err.response?.data?.error || "❌ Dependency installation failed.", "error");
     } finally {
       setActionLoading(null);
     }
@@ -106,7 +106,7 @@ export default function ReactCommandToolbar({
       addToast(`React dev server active on port ${res.port}!`, "success");
       if (onOpenPreview) onOpenPreview();
     } catch (err) {
-      addToast(err.response?.data?.message || "Failed to start React dev server.", "error");
+      addToast(err.response?.data?.message || err.response?.data?.error || "Failed to start React dev server.", "error");
     } finally {
       setActionLoading(null);
     }

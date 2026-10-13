@@ -11,6 +11,24 @@ const CONTAINER_PORT = 5173;
 const activeSandboxes = new Map();
 const OUTPUT_LIMIT = 100_000;
 
+let dockerAvailabilityCached = null;
+let lastDockerCheckTime = 0;
+
+export async function isDockerAvailable() {
+  const now = Date.now();
+  if (dockerAvailabilityCached !== null && now - lastDockerCheckTime < 15_000) {
+    return dockerAvailabilityCached;
+  }
+  try {
+    await docker.ping();
+    dockerAvailabilityCached = true;
+  } catch {
+    dockerAvailabilityCached = false;
+  }
+  lastDockerCheckTime = now;
+  return dockerAvailabilityCached;
+}
+
 const sandboxError = (message, statusCode = 503, errorCode = "DOCKER_UNAVAILABLE") => {
   const error = new Error(message);
   error.statusCode = statusCode;
@@ -110,7 +128,6 @@ async function runOneShot(projectId, args, { timeoutMs = 180_000, installIfMissi
       Cmd: cmd,
       HostConfig: {
         ...dockerOptions(workspace).HostConfig,
-        Mounts: [{ Type: "volume", Source: nodeModulesVolume, Target: "/workspace/node_modules" }],
         AutoRemove: false,
       },
     });
@@ -159,7 +176,6 @@ export async function startReactSandbox(projectId, port, mode = "dev", callbacks
       Cmd: ["sh", "-lc", launchScript],
       HostConfig: {
         ...dockerOptions(workspace, port).HostConfig,
-        Mounts: [{ Type: "volume", Source: nodeModulesVolume, Target: "/workspace/node_modules" }],
         AutoRemove: false,
       },
     };

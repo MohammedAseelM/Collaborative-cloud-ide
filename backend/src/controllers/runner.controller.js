@@ -30,18 +30,21 @@ export const installProjectDependencies = async (req, res, next) => {
     verifyProjectPermission(project, req.user._id, "Editor");
 
     const io = req.app.get("io");
-    const success = await installDependencies(projectId, io);
+    const result = await installDependencies(projectId, io);
+    const success = typeof result === "object" ? Boolean(result.success) : Boolean(result);
+    const errorMsg = typeof result === "object" ? result.error : undefined;
 
     await Activity.create({
       project: projectId,
       user: req.user._id,
       type: "RUN",
-      details: { action: "install_dependencies", success },
+      details: { action: "install_dependencies", success, error: errorMsg },
     });
 
-    res.status(200).json({
+    res.status(success ? 200 : 400).json({
       success,
-      message: success ? "Dependencies installed successfully" : "Dependency installation failed",
+      message: success ? "Dependencies installed successfully" : (errorMsg || "Dependency installation failed"),
+      error: errorMsg,
     });
   } catch (error) {
     next(error);
