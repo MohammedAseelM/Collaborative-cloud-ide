@@ -120,7 +120,7 @@ async function runOneShot(projectId, args, { timeoutMs = 180_000, installIfMissi
     await ensureImage();
     const nodeModulesVolume = await ensureProjectVolume(projectId);
     const script = installIfMissing
-      ? "if [ ! -f node_modules/.bin/vite ] && [ ! -d node_modules/vite ]; then npm install --legacy-peer-deps --no-audit --no-fund || exit $?; fi; exec \"$@\""
+      ? "if [ ! -f node_modules/.bin/vite ] && [ ! -d node_modules/vite ]; then npm install --include=dev --legacy-peer-deps --no-audit --no-fund || exit $?; fi; exec \"$@\""
       : null;
     const cmd = script ? ["sh", "-lc", script, "sandbox", ...args] : args;
     container = await docker.createContainer({
@@ -169,7 +169,7 @@ export async function startReactSandbox(projectId, port, mode = "dev", callbacks
     await ensureImage();
     const nodeModulesVolume = await ensureProjectVolume(projectId);
     const npmScript = mode === "preview" ? "preview" : "dev";
-    const launchScript = `if [ ! -f node_modules/.bin/vite ] && [ ! -d node_modules/vite ]; then npm install --legacy-peer-deps --no-audit --no-fund || exit $?; fi; exec npm run ${npmScript} -- --host 0.0.0.0 --port ${CONTAINER_PORT}`;
+    const launchScript = `if [ ! -f node_modules/.bin/vite ] && [ ! -d node_modules/vite ]; then npm install --include=dev --legacy-peer-deps --no-audit --no-fund || exit $?; fi; exec npm run ${npmScript} -- --host 0.0.0.0 --port ${CONTAINER_PORT}`;
     const containerOptions = {
       ...dockerOptions(workspace, port),
       name: `ccide-react-${projectId}`,

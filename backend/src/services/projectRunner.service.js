@@ -134,7 +134,8 @@ export const getProjectExecutionEnv = (projectDir, extraEnv = {}) => {
     ...process.env,
     PATH: combinedPath,
     Path: combinedPath,
-    NODE_ENV: process.env.NODE_ENV || "development",
+    NODE_ENV: extraEnv.NODE_ENV || "development",
+    npm_config_production: "false",
     FORCE_COLOR: "true",
     ...extraEnv,
   };
@@ -215,7 +216,7 @@ export const syncFileNodeToWorkspace = async (fileId, content) => {
   fs.writeFileSync(filePath, content || "", "utf-8");
 };
 
-const TERMINAL_COMMAND_TIMEOUT_MS = 30_000;
+const TERMINAL_COMMAND_TIMEOUT_MS = 120_000;
 const TERMINAL_OUTPUT_LIMIT = 100_000;
 const ALLOWED_TERMINAL_COMMANDS = new Set([
   "npm",
@@ -592,10 +593,21 @@ export const installDependencies = async (projectId, io = null) => {
 
       // Determine install command: use npm ci if package-lock exists, otherwise npm install
       const hasLockfile = fs.existsSync(path.join(projectDir, "package-lock.json"));
-      let defaultInstall = hasLockfile ? "npm ci" : "npm install";
+      let defaultInstall = hasLockfile ? "npm ci --include=dev" : "npm install --include=dev";
       let installCmd = project?.installCommand || defaultInstall;
-      if (installCmd.startsWith("npm") && !installCmd.includes("--legacy-peer-deps")) {
-        installCmd = `${installCmd} --legacy-peer-deps --no-audit --no-fund`;
+      if (installCmd.startsWith("npm")) {
+        if (!installCmd.includes("--include=dev")) {
+          installCmd = `${installCmd} --include=dev`;
+        }
+        if (!installCmd.includes("--legacy-peer-deps")) {
+          installCmd = `${installCmd} --legacy-peer-deps`;
+        }
+        if (!installCmd.includes("--no-audit")) {
+          installCmd = `${installCmd} --no-audit`;
+        }
+        if (!installCmd.includes("--no-fund")) {
+          installCmd = `${installCmd} --no-fund`;
+        }
       }
 
       if (!installCmd) {
@@ -672,14 +684,16 @@ export const installDependencies = async (projectId, io = null) => {
         });
 
         child.on("exit", async (code) => {
-          if (code === 0 && areDependenciesInstalled(projectDir, project?.projectType)) {
+          const installed = areDependenciesInstalled(projectDir, project?.projectType);
+          if (code === 0 && installed) {
             appendAndBroadcastLog(projectId, "✅ Dependencies installed successfully!", io);
             await updateServerStatus(projectId, "ready", null, io);
             resolve({ success: true });
           } else if (code === 0) {
-            appendAndBroadcastLog(projectId, "✅ Dependencies installed successfully!", io);
-            await updateServerStatus(projectId, "ready", null, io);
-            resolve({ success: true });
+            const errorMsg = "Dependency installation completed with exit code 0, but required binaries (e.g. Vite) were not detected in node_modules.";
+            appendAndBroadcastLog(projectId, `❌ [INSTALL] ${errorMsg}`, io);
+            await updateServerStatus(projectId, "error", null, io);
+            resolve({ success: false, error: errorMsg });
           } else {
             const errSummary = lastStderr.trim().slice(-400) || lastStdout.trim().slice(-400) || `exit code ${code}`;
             const errorMsg = `Dependency installation failed (exit code ${code}): ${errSummary}`;
